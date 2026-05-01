@@ -98,6 +98,11 @@
 						<popup>false</popup>
 					</control>
 				</setting>
+				<setting id="enable_live_danmaku" type="boolean" label="30133" help="30134">
+					<level>0</level>
+					<default>true</default>
+					<control type="toggle"/>
+				</setting>
 			</group>
 			<group id="3" label="30010">
 				<setting id="enable_dash" type="boolean" label="30011" help="30132">

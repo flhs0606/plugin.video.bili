@@ -290,3 +290,11 @@ msgstr "安装 inputstream.adaptive 插件"
 msgctxt "#30132"
 msgid "This feature requires the inputstream.adaptive plugin. When disabled, the maximum video resolution is limited to 720P."
 msgstr "此功能需要安装 inputstream.adaptive 插件。禁用后，视频最高分辨率将限制为 720P"
+
+msgctxt "#30133"
+msgid "Live Danmaku"
+msgstr "直播弹幕"
+
+msgctxt "#30134"
+msgid "Enable real-time danmaku overlay when watching live streams. Requires network connection."
+msgstr "观看直播时启用实时弹幕叠加。需要网络连接。"

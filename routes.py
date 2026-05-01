@@ -23,6 +23,7 @@ from video_utils import (
     get_video_item, parse_plot, choose_live_resolution,
     generate_mpd, generate_ass, report_history
 )
+from live_danmaku import start_live_danmaku
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1000,13 +1001,20 @@ def live(id):
 
     xbmc.log('[live] %s/%s room_id=%s' % (fmt_name, codec_name, id), xbmc.LOGINFO)
 
+    # ── 直播弹幕 ──
+    live_ass = None
+    if getSetting('enable_live_danmaku') == 'true':
+        uid = get_uid()
+        cookie = get_cookie()
+        live_ass, _ = start_live_danmaku(id, uid, cookie)
+
     # FLV → ffmpeg 管道直连（稳定）
     if fmt_name == 'flv':
         plugin.set_resolved_url({
             'path': '%s|%s' % (chosen, hdr),
             'is_playable': True,
             'is_live': True,
-        })
+        }, subtitles=live_ass)
         return
 
     # fmp4/ts → inputstream.ffmpegdirect（原生 ffmpeg + reconnect）
@@ -1026,7 +1034,7 @@ def live(id):
                 'inputstream.ffmpegdirect.reconnect_streamed': '1',
                 'inputstream.ffmpegdirect.reconnect_delay_max': '5',
             }
-        })
+        }, subtitles=live_ass)
         return
 
     # 回退 ffmpeg 管道
@@ -1035,7 +1043,7 @@ def live(id):
         'path': '%s|%s' % (chosen, hdr),
         'is_playable': True,
         'is_live': True,
-    })
+    }, subtitles=live_ass)
 
 
 # ═══════════════════════════════════════════════════════════════════════════

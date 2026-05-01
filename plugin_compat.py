@@ -11,6 +11,7 @@ import os
 import re
 import json
 import time
+import threading
 from functools import wraps
 from datetime import timedelta
 from urllib.parse import urlencode as _urlencode
@@ -311,14 +312,25 @@ class Plugin:
         xbmcplugin.setResolvedUrl(handle, succeeded, li)
 
         if subtitles:
-            player = xbmc.Player()
-            for _ in range(30):
-                if player.isPlaying():
-                    break
-                time.sleep(1)
-            player.setSubtitles(subtitles)
+            # Kodi 21: setSubtitles 必须在播放开始后调用，等待 player 就绪
+            t = threading.Thread(target=self._wait_and_set_subtitles,
+                                 args=(subtitles,), daemon=True)
+            t.start()
 
         return [li]
+
+    def _wait_and_set_subtitles(self, subtitles):
+        """等待播放器启动后设置外挂字幕"""
+        player = xbmc.Player()
+        for _ in range(30):
+            if player.isPlaying():
+                break
+            time.sleep(1)
+        if player.isPlaying():
+            xbmc.log('[plugin_compat] setting subtitles: %s' % subtitles, xbmc.LOGINFO)
+            player.setSubtitles(subtitles)
+        else:
+            xbmc.log('[plugin_compat] player not started, subtitles skipped', xbmc.LOGWARNING)
 
     # ── run ──────────────────────────────────────────────────────────────
 
