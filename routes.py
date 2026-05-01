@@ -23,7 +23,7 @@ from video_utils import (
     get_video_item, parse_plot, choose_live_resolution,
     generate_mpd, generate_ass, report_history
 )
-from live_danmaku import start_live_danmaku
+from live_danmaku import start_live_danmaku, stop_all_live_danmaku
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1508,6 +1508,7 @@ def videopages(id):
 
 @plugin.route('/video/<id>/<cid>/<ispgc>/<audio_only>/<title>/')
 def video(id, cid, ispgc, audio_only, title):
+    stop_all_live_danmaku()  # 进点播时停掉所有直播弹幕线程
     cid = str(cid)  # 统一转为字符串，避免类型混用导致路径拼接或API调用异常
     ispgc = ispgc == 'true'
     audio_only = audio_only == 'true'
