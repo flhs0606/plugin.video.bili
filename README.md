@@ -1,5 +1,5 @@
 # 哔哩哔哩 Kodi 插件
-个人重构版，支持kodi21。感谢原作者chen310
+个人重构版，支持kodi21，添加直播弹幕，修bug，性能优化。感谢原作者chen310
 ### 下载
 
 插件下载地址: [plugin.video.bili-master.zip](https://github.com/flhs0606/plugin.video.bili/archive/refs/heads/master.zip)
