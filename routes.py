@@ -15,7 +15,7 @@ from utils import (
     make_dirs, get_temp_path, safe_remove_dir
 )
 from api import (
-    get_cookie, get_cookie_value, get_uid,
+    get_cookie, get_cookie_value, get_uid, clear_cookie_cache,
     raw_fetch_url, fetch_url, raw_get_api_data, cached_get_api_data, get_api_data,
     getWbiKeys, encWbi, post_data
 )
@@ -64,6 +64,7 @@ def check_login():
 def logout():
     account = plugin.get_storage('account')
     account['cookie'] = ''
+    clear_cookie_cache()
     plugin.clear_function_cache()
     xbmcgui.Dialog().ok('提示', '退出成功')
 
@@ -80,6 +81,7 @@ def cookie_login():
         return
     account = plugin.get_storage('account')
     account['cookie'] = cookie
+    clear_cookie_cache()
     plugin.clear_function_cache()
     xbmcgui.Dialog().ok('提示', 'Cookie 设置成功')
 
@@ -95,7 +97,7 @@ def qrcode_login():
         headers = {
             'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_12_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/59.0.3071.115 Safari/537.36',
         }
-        res = requests.get('https://passport.bilibili.com/x/passport-login/web/qrcode/generate', headers=headers).json()
+        res = requests.get('https://passport.bilibili.com/x/passport-login/web/qrcode/generate', headers=headers, timeout=10).json()
     except Exception:
         notify('提示', '二维码获取失败')
         return
@@ -131,7 +133,7 @@ def polling_login_status(key):
     }
     for i in range(50):
         try:
-            response = session.get(f'https://passport.bilibili.com/x/passport-login/web/qrcode/poll?qrcode_key={key}', headers=headers)
+            response = session.get(f'https://passport.bilibili.com/x/passport-login/web/qrcode/poll?qrcode_key={key}', headers=headers, timeout=10)
             check_result = response.json()
         except Exception:
             time.sleep(3)
@@ -142,9 +144,10 @@ def polling_login_status(key):
         if check_result['data']['code'] == 0:
             account = plugin.get_storage('account')
             cookies = session.cookies
-            cookies = ' '.join([cookie.name + '=' + cookie.value + ';' for cookie in cookies])
+            cookies = '; '.join([cookie.name + '=' + cookie.value for cookie in cookies])
             xbmc.log('set-cookie: ' + cookies)
             account['cookie'] = cookies
+            clear_cookie_cache()
             plugin.clear_function_cache()
             xbmcgui.Dialog().ok('提示', '登录成功')
             xbmc.executebuiltin('Action(Back)')

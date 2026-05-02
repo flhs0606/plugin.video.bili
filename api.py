@@ -23,6 +23,8 @@ mixinKeyEncTab = [
     36, 20, 34, 44, 52
 ]
 
+_WBI_ESCAPE = str.maketrans('', '', "!'()*")
+
 
 def getMixinKey(orig: str):
     '对 imgKey 和 subKey 进行字符顺序打乱编码'
@@ -36,17 +38,14 @@ def encWbi(params: dict, img_key: str, sub_key: str):
     params['wts'] = curr_time                                   # 添加 wts 字段
     params = dict(sorted(params.items()))                       # 按照 key 重排参数
     # 过滤 value 中的 "!'()*" 字符
-    params = {
-        k : ''.join(filter(lambda chr: chr not in "!'()*", str(v)))
-        for k, v 
-        in params.items()
-    }
+    params = {k: str(v).translate(_WBI_ESCAPE) for k, v in params.items()}
     query = urlencode(params)                      # 序列化参数
     wbi_sign = md5((query + mixin_key).encode()).hexdigest()    # 计算 w_rid
     params['w_rid'] = wbi_sign
     return params
 
 
+@plugin.cached(TTL=30)
 def getWbiKeys():
     '获取最新的 img_key 和 sub_key'
     json_content = get_api_data('/x/web-interface/nav')
@@ -76,11 +75,29 @@ def _ensure_buvid3(cookie):
     return prefix + cookie if cookie else prefix.rstrip('; ')
 
 
+_cookie_cache = None
+_cookie_cache_time = 0
+_COOKIE_CACHE_TTL = 60  # 60 秒缓存，避免每次请求都读磁盘
+
+
+def clear_cookie_cache():
+    """供 login/logout 调用，强制刷新 cookie 缓存"""
+    global _cookie_cache, _cookie_cache_time
+    _cookie_cache = None
+    _cookie_cache_time = 0
+
+
 def get_cookie():
+    global _cookie_cache, _cookie_cache_time
+    now = time.time()
+    if _cookie_cache is not None and now - _cookie_cache_time < _COOKIE_CACHE_TTL:
+        return _cookie_cache
     account = plugin.get_storage('account')
     cookie = account.get('cookie', '')
     # 始终确保 buvid3 存在，避免 CDN 403（参考 wiliwili 做法）
     cookie = _ensure_buvid3(cookie)
+    _cookie_cache = cookie
+    _cookie_cache_time = now
     return cookie
 
 
@@ -116,11 +133,15 @@ def _build_headers():
     return headers
 
 
+_REQUEST_TIMEOUT = 10  # 所有请求统一超时（秒），避免 Kodi 退出时残留进程
+
+
 def post_data(url, data):
     headers = _build_headers()
     try:
-        res = requests.post(url, data=data, headers=headers).json()
+        res = requests.post(url, data=data, headers=headers, timeout=_REQUEST_TIMEOUT).json()
     except Exception as e:
+        xbmc.log('[plugin.video.bili] post_data error: %s url=%s' % (str(e), url), xbmc.LOGWARNING)
         res = {'code': -1, 'message': '网络错误'}
     return res
 
@@ -129,8 +150,9 @@ def raw_fetch_url(url):
     xbmc.log('url_get: ' + url)
     headers = _build_headers()
     try:
-        res = requests.get(url, headers=headers).json()
+        res = requests.get(url, headers=headers, timeout=_REQUEST_TIMEOUT).json()
     except Exception as e:
+        xbmc.log('[plugin.video.bili] raw_fetch_url error: %s url=%s' % (str(e), url), xbmc.LOGWARNING)
         res = {'code': -1, 'message': '网络错误'}
     return res
 

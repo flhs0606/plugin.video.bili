@@ -582,24 +582,30 @@ def TestFreeRows(rows, c, row, width, height, bottomReserved, duration_marquee, 
     res = 0
     rowmax = height - bottomReserved
     targetRow = None
-    if c[4] in (1, 2):
-        while row < rowmax and res < c[7]:
-            if targetRow != rows[c[4]][row]:
-                targetRow = rows[c[4]][row]
-                if targetRow and targetRow[0] + duration_still > c[0]:
+    # 缓存热点字段，避免重复 tuple 索引
+    c_pos = c[4]
+    c_h = c[7]
+    c_t = c[0]
+    if c_pos in (1, 2):
+        row_list = rows[c_pos]
+        while row < rowmax and res < c_h:
+            if targetRow != row_list[row]:
+                targetRow = row_list[row]
+                if targetRow and targetRow[0] + duration_still > c_t:
                     break
             row += 1
             res += 1
     else:
         try:
-            thresholdTime = c[0] - duration_marquee * (1 - width / (c[8] + width))
+            thresholdTime = c_t - duration_marquee * (1 - width / (c[8] + width))
         except ZeroDivisionError:
-            thresholdTime = c[0] - duration_marquee
-        while row < rowmax and res < c[7]:
-            if targetRow != rows[c[4]][row]:
-                targetRow = rows[c[4]][row]
+            thresholdTime = c_t - duration_marquee
+        row_list = rows[c_pos]
+        while row < rowmax and res < c_h:
+            if targetRow != row_list[row]:
+                targetRow = row_list[row]
                 try:
-                    if targetRow and (targetRow[0] > thresholdTime or targetRow[0] + targetRow[8] * duration_marquee / (targetRow[8] + width) > c[0]):
+                    if targetRow and (targetRow[0] > thresholdTime or targetRow[0] + targetRow[8] * duration_marquee / (targetRow[8] + width) > c_t):
                         break
                 except ZeroDivisionError:
                     pass
@@ -653,38 +659,45 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
 def WriteComment(f, c, row, width, height, bottomReserved, fontsize, duration_marquee, duration_still, styleid):
     text = ASSEscape(c[3])
+    c_pos = c[4]  # 缓存，减少 tuple 索引
+    c_t = c[0]
     styles = []
-    if c[4] == 1:
+    if c_pos == 1:
         styles.append('\\an8\\pos(%(halfwidth)d, %(row)d)' % {'halfwidth': width / 2, 'row': row})
         duration = duration_still
-    elif c[4] == 2:
+    elif c_pos == 2:
         styles.append('\\an2\\pos(%(halfwidth)d, %(row)d)' % {'halfwidth': width / 2, 'row': ConvertType2(row, height, bottomReserved)})
         duration = duration_still
-    elif c[4] == 3:
+    elif c_pos == 3:
         styles.append('\\move(%(neglen)d, %(row)d, %(width)d, %(row)d)' % {'width': width, 'row': row, 'neglen': -math.ceil(c[8])})
         duration = duration_marquee
     else:
         styles.append('\\move(%(width)d, %(row)d, %(neglen)d, %(row)d)' % {'width': width, 'row': row, 'neglen': -math.ceil(c[8])})
         duration = duration_marquee
-    if not (-1 < c[6] - fontsize < 1):
-        styles.append('\\fs%.0f' % c[6])
-    if c[5] != 0xffffff:
-        styles.append('\\c&H%s&' % ConvertColor(c[5]))
-        if c[5] == 0x000000:
+    c_fs = c[6]
+    if not (-1 < c_fs - fontsize < 1):
+        styles.append('\\fs%.0f' % c_fs)
+    c_color = c[5]
+    if c_color != 0xffffff:
+        styles.append('\\c&H%s&' % ConvertColor(c_color))
+        if c_color == 0x000000:
             styles.append('\\3c&HFFFFFF&')
-    f.write('Dialogue: 2,%(start)s,%(end)s,%(styleid)s,,0000,0000,0000,,{%(styles)s}%(text)s\n' % {'start': ConvertTimestamp(c[0]), 'end': ConvertTimestamp(c[0] + duration), 'styles': ''.join(styles), 'text': text, 'styleid': styleid})
+    f.write('Dialogue: 2,%(start)s,%(end)s,%(styleid)s,,0000,0000,0000,,{%(styles)s}%(text)s\n' % {'start': ConvertTimestamp(c_t), 'end': ConvertTimestamp(c_t + duration), 'styles': ''.join(styles), 'text': text, 'styleid': styleid})
+
+
+def _ReplaceLeadingSpace(s):
+    """提取到模块级避免每次 ASSEscape 调用时重复定义内部函数"""
+    if len(s) == 0:
+        return s
+    if s[0] in (' ', '\t'):
+        s = '\u200b' + s
+    if s[-1] in (' ', '\t'):
+        s = s + '\u200b'
+    return s
 
 
 def ASSEscape(s):
-    def ReplaceLeadingSpace(s):
-        if len(s) == 0:
-            return s
-        if s[0] in (' ', '\t'):
-            s = '\u200b' + s
-        if s[-1] in (' ', '\t'):
-            s = s + '\u200b'
-        return s
-    return '\\N'.join((ReplaceLeadingSpace(i) or ' ' for i in str(s).replace('\\', '\\\u200b').replace('{', '\\{').replace('}', '\\}').split('\n')))
+    return '\\N'.join((_ReplaceLeadingSpace(i) or ' ' for i in str(s).replace('\\', '\\\u200b').replace('{', '\\{').replace('}', '\\}').split('\n')))
 
 
 def CalculateLength(s):
@@ -699,23 +712,43 @@ def ConvertTimestamp(timestamp):
     return '%d:%02d:%02d.%02d' % (int(hour), int(minute), int(second), int(centsecond))
 
 
+def _ClipByte(x):
+    """提取到模块级避免每次 ConvertColor 调用时重复创建 lambda"""
+    if x > 255:
+        return 255
+    if x < 0:
+        return 0
+    return round(x)
+
+
+# BT.601 → BT.709 转换矩阵常量（预乘）
+_C709_R = (0.00956384088080656, 0.03217254540203729, 0.95826361371715607)
+_C709_G = (-0.10493933142075390, 1.17231478191855154, -0.06737545049779757)
+_C709_B = (0.91348912373987645, 0.07858536372532510, 0.00792551253479842)
+
+
+# 颜色转换缓存：B站弹幕颜色种类有限（主要是白/红/蓝/绿等），LRU 可大幅减少重复计算
+_color_cache = {0x000000: '000000', 0xffffff: 'FFFFFF'}
+
+
 def ConvertColor(RGB, width=1280, height=576):
-    if RGB == 0x000000:
-        return '000000'
-    elif RGB == 0xffffff:
-        return 'FFFFFF'
+    if RGB in _color_cache:
+        return _color_cache[RGB]
     R = (RGB >> 16) & 0xff
     G = (RGB >> 8) & 0xff
     B = RGB & 0xff
     if width < 1280 and height < 576:
-        return '%02X%02X%02X' % (B, G, R)
+        result = '%02X%02X%02X' % (B, G, R)
     else:  # VobSub always uses BT.601 colorspace, convert to BT.709
-        ClipByte = lambda x: 255 if x > 255 else 0 if x < 0 else round(x)
-        return '%02X%02X%02X' % (
-            ClipByte(R * 0.00956384088080656 + G * 0.03217254540203729 + B * 0.95826361371715607),
-            ClipByte(R * -0.10493933142075390 + G * 1.17231478191855154 + B * -0.06737545049779757),
-            ClipByte(R * 0.91348912373987645 + G * 0.07858536372532510 + B * 0.00792551253479842)
+        result = '%02X%02X%02X' % (
+            _ClipByte(R * _C709_R[0] + G * _C709_R[1] + B * _C709_R[2]),
+            _ClipByte(R * _C709_G[0] + G * _C709_G[1] + B * _C709_G[2]),
+            _ClipByte(R * _C709_B[0] + G * _C709_B[1] + B * _C709_B[2])
         )
+    # 缓存有限，防止长视频+多颜色弹幕场景内存膨胀
+    if len(_color_cache) < 256:
+        _color_cache[RGB] = result
+    return result
 
 
 def ConvertType2(row, height, bottomReserved):

@@ -38,8 +38,11 @@ class BilibiliMonitor(xbmc.Monitor):
     def shutdown_httpd(self):
         if self.httpd:
             self.httpd.shutdown()
-            self.httpd.socket.close()
-            self.httpd_thread.join()
+            self.httpd_thread.join(timeout=3)
+            try:
+                self.httpd.socket.close()
+            except Exception:
+                pass
             self.httpd_thread = None
             self.httpd = None
 

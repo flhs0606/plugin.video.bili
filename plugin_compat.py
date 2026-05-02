@@ -11,6 +11,7 @@ import os
 import re
 import json
 import time
+import atexit
 import threading
 from functools import wraps
 from datetime import timedelta
@@ -79,6 +80,13 @@ class _Storage(dict):
         self._ttl = ttl
         self._dirty = False
         self._load()
+        atexit.register(self._atexit_sync)
+
+    def _atexit_sync(self):
+        try:
+            self.sync()
+        except Exception:
+            pass
 
     def _load(self):
         if os.path.isfile(self._filepath):
@@ -222,6 +230,14 @@ class Plugin:
             return self._unsynced_storages[filename]
         ttl = timedelta(minutes=TTL) if TTL else None
         s = _Storage(filename, ttl=ttl)
+        # 限制缓存数量，防止长期运行（service 模式）内存泄漏
+        if len(self._unsynced_storages) >= 30:
+            oldest = next(iter(self._unsynced_storages))
+            try:
+                self._unsynced_storages[oldest].close()
+            except Exception:
+                pass
+            del self._unsynced_storages[oldest]
         self._unsynced_storages[filename] = s
         return s
 
