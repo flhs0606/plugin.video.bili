@@ -26,6 +26,40 @@ from video_utils import (
 from live_danmaku import start_live_danmaku, stop_all_live_danmaku
 
 
+# ── 通用辅助函数 ──────────────────────────────────────────────────────────
+
+def _append_next_page(videos, route_name, **kwargs):
+    """统一添加"下一页"条目，减少 15+ 处重复的 dict 构造"""
+    videos.append({
+        'label': tag('下一页', 'yellow'),
+        'path': plugin.url_for(route_name, **kwargs),
+    })
+
+
+def _up_context_menu(uname, mid):
+    """统一构造"转到UP"上下文菜单"""
+    return [(f"转到UP: {uname}", f"Container.Update({plugin.url_for('user', id=mid)})")]
+
+
+def _live_status_label(status, uname, title, sep=' - '):
+    """统一构造直播状态标签"""
+    if status == 1:
+        return tag('【直播中】', 'red') + uname + sep + title
+    else:
+        return tag('【未直播】', 'grey') + uname + sep + title
+
+
+def _format_up_plot(uname, mid, roomid='', extra=''):
+    """统一构造 UP 主信息 plot 行"""
+    plot = f"UP: {uname}\tID: {mid}"
+    if roomid:
+        plot += f"\n房间号: {roomid}"
+    plot += "\n\n"
+    if extra:
+        plot += extra
+    return plot
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # 缓存 / 登录 / 工具路由
 # ═══════════════════════════════════════════════════════════════════════════
@@ -394,10 +428,7 @@ def space_videos(id, page):
         if video:
             videos.append(video)
     if int(page) * ps < res['data']['page']['count']:
-        videos.append({
-            'label': tag('下一页', 'yellow'),
-            'path': plugin.url_for('space_videos', id=id, page=int(page) + 1),
-        })
+        _append_next_page(videos, 'space_videos', id=id, page=int(page) + 1)
     return videos
 
 
@@ -441,10 +472,7 @@ def _relation_list(api_path, route_name, id, page):
         }
         users.append(user)
     if int(page) * 50 < res['data']['total']:
-        users.append({
-            'label': tag('下一页', 'yellow'),
-            'path': plugin.url_for(route_name, id=id, page=int(page) + 1),
-        })
+        _append_next_page(users, route_name, id=id, page=int(page) + 1)
     return users
 
 
@@ -498,13 +526,9 @@ def user_live_room(uid):
         notify('提示', '直播间不存在')
         return []
     plot = f"UP: {item['name']}\tID: {item['mid']}\n房间号: {item['live_room']['roomid']}\n{item['live_room']['watched_show']['text_large']}"
-    if item['live_room']['liveStatus'] == 1:
-        label = f"{tag('【直播中】', 'red')}{item['name']} - {item['live_room']['title']}"
-    else:
-        label = f"{tag('【未直播】', 'grey')}{item['name']} - {item['live_room']['title']}"
-    context_menu = [
-        (f"转到UP: {item['name']}", f"Container.Update({plugin.url_for('user', id=item['mid'])})")
-    ]
+    label = _live_status_label(item['live_room']['liveStatus'],
+                               item['name'], item['live_room']['title'])
+    context_menu = _up_context_menu(item['name'], item['mid'])
     return [{
         'label': label,
         'path': plugin.url_for('live', id=item['live_room']['roomid']),
@@ -554,10 +578,7 @@ def seasons_series(uid, page):
             'thumbnail': item['meta']['cover']
         })
     if res['data']['items_lists']['page']['page_num'] * res['data']['items_lists']['page']['page_size'] < res['data']['items_lists']['page']['total']:
-        collections.append({
-            'label': tag('下一页', 'yellow'),
-            'path': plugin.url_for('seasons_series', uid=uid, page=int(page)+1)
-        })
+        _append_next_page(collections, 'seasons_series', uid=uid, page=int(page)+1)
     return collections
 
 
@@ -593,16 +614,12 @@ def seasons_and_series_detail(id, uid, type, page):
             videos.append(video)
     if type == 'season':
         if res['data']['page']['page_num'] * res['data']['page']['page_size'] < res['data']['page']['total']:
-            videos.append({
-                'label': tag('下一页', 'yellow'),
-                'path': plugin.url_for('seasons_and_series_detail', uid=uid, id=id, type=type, page=int(page)+1)
-            })
+            _append_next_page(videos, 'seasons_and_series_detail',
+                              uid=uid, id=id, type=type, page=int(page)+1)
     else:
         if res['data']['page']['num'] * res['data']['page']['size'] < res['data']['page']['total']:
-            videos.append({
-                'label': tag('下一页', 'yellow'),
-                'path': plugin.url_for('seasons_and_series_detail', uid=uid, id=id, type=type, page=int(page)+1)
-            })
+            _append_next_page(videos, 'seasons_and_series_detail',
+                              uid=uid, id=id, type=type, page=int(page)+1)
     return videos
 
 
@@ -756,23 +773,21 @@ def _build_live_search_item(item, has_title=True):
     """构建直播搜索结果列表项，has_title 表示 item 是否包含 title 字段"""
     uname = clear_text(item['uname'])
     plot = f"UP: {uname}\tID: {item['uid']}\n房间号: {item['roomid']}\n\n"
-    context_menu = [
-        (f"转到UP: {uname}", f"Container.Update({plugin.url_for('user', id=item['uid'])})")
-    ]
+    context_menu = _up_context_menu(uname, item['uid'])
     if has_title:
         title = clear_text(item['title'])
         title_display = item['title'].replace('<em class=\"keyword\">', '[COLOR pink]').replace('</em>', '[/COLOR]')
         if item['live_status'] == 1:
-            label = tag('【直播中】', 'red') + item['uname'] + ' - ' + title_display
+            label = _live_status_label(1, item['uname'], title_display)
         else:
-            label = tag('【未直播】', 'grey') + item['uname'] + ' - ' + title_display
+            label = _live_status_label(0, item['uname'], title_display)
     else:
         title = uname
         name_display = item['uname'].replace('<em class=\"keyword\">', '[COLOR pink]').replace('</em>', '[/COLOR]')
         if item['live_status'] == 1:
-            label = tag('【直播中】', 'red') + name_display
+            label = _live_status_label(1, '', name_display, sep='')
         else:
-            label = tag('【未直播】', 'grey') + name_display
+            label = _live_status_label(0, '', name_display, sep='')
     return {
         'label': label,
         'path': plugin.url_for('live', id=item['roomid']),
@@ -827,10 +842,8 @@ def search_by_keyword(type, keyword, page):
         else:
             videos.extend(get_search_list(list))
     if res['data']['page'] < res['data']['numPages']:
-        videos.append({
-            'label': tag('下一页', 'yellow'),
-            'path': plugin.url_for('search_by_keyword', type=type, keyword=keyword , page=int(page)+1)
-        })
+        _append_next_page(videos, 'search_by_keyword',
+                          type=type, keyword=keyword, page=int(page)+1)
     return videos
 
 
@@ -879,13 +892,11 @@ def live_area(pid, id, page):
         return lives
     list = res['data']['list']
     for item in list:
-        plot = f"UP: {item['uname']}\tID: {item['uid']}\n房间号: {item['roomid']}\n\n"
+        plot = _format_up_plot(item['uname'], item['uid'], item['roomid'])
         if item['verify']['desc']:
             plot += tag(item['verify']['desc'], 'orange') + '\n\n'
         plot += item['title']
-        context_menu = [
-            (f"转到UP: {item['uname']}", f"Container.Update({plugin.url_for('user', id=item['uid'])})")
-        ]
+        context_menu = _up_context_menu(item['uname'], item['uid'])
         live = {
             'label': item['uname'] + ' - ' + item['title'],
             'path': plugin.url_for('live', id=item['roomid']),
@@ -902,10 +913,7 @@ def live_area(pid, id, page):
         }
         lives.append(live)
     if page_size * int(page) < res['data']['count']:
-        lives.append({
-            'label': tag('下一页', 'yellow'),
-            'path': plugin.url_for('live_area', pid=pid, id=id, page=int(page)+1)
-        })
+        _append_next_page(lives, 'live_area', pid=pid, id=id, page=int(page)+1)
     return lives
 
 
@@ -924,14 +932,9 @@ def followingLive(page):
     for live in list:
         # B站关注API可能返回 room_id（真实房间号）和 roomid（短号），优先使用 room_id
         room_id = live.get('room_id', live.get('roomid', 0))
-        if live['live_status'] == 1:
-            label = tag('【直播中】 ', 'red')
-        else:
-            label = tag('【未开播】 ', 'grey')
-        label += live['uname'] + ' - ' +  live['title']
-        context_menu = [
-            (f"转到UP: {live['uname']}", f"Container.Update({plugin.url_for('user', id=live['uid'])})")
-        ]
+        label = _live_status_label(live['live_status'], live['uname'],
+                                    live['title'], sep=' - ')
+        context_menu = _up_context_menu(live['uname'], live['uid'])
         item = {
             'label': label,
             'path': plugin.url_for('live', id=room_id),
@@ -948,10 +951,7 @@ def followingLive(page):
         }
         items.append(item)
     if page < res['data']['totalPage']:
-        items.append({
-            'label': tag('下一页', 'yellow'),
-            'path': plugin.url_for('followingLive', page=page + 1)
-        })
+        _append_next_page(items, 'followingLive', page=page + 1)
     return items
 
 
@@ -1156,10 +1156,7 @@ def favlist(id, page):
         if video:
             videos.append(video)
     if res['data']['has_more']:
-        videos.append({
-            'label': tag('下一页', 'yellow'),
-            'path': plugin.url_for('favlist', id=id, page=int(page)+1)
-        })
+        _append_next_page(videos, 'favlist', id=id, page=int(page)+1)
     return videos
 
 
@@ -1200,14 +1197,9 @@ def history(time):
                 continue
         else:
             if item['history']['business'] == 'live':
-                if item['live_status'] == 1:
-                    label = tag('【直播中】 ', 'red')
-                else:
-                    label = tag('【未开播】 ', 'grey')
-                label += item['author_name'] + ' - ' +  item['title']
-                context_menu = [
-                    (f"转到UP: {item['author_name']}", f"Container.Update({plugin.url_for('user', id=item['author_mid'])})")
-                ]
+                label = _live_status_label(item['live_status'],
+                                            item['author_name'], item['title'])
+                context_menu = _up_context_menu(item['author_name'], item['author_mid'])
                 video = {
                     'label': label,
                     'path': plugin.url_for('live', id=item['kid']),
@@ -1238,10 +1230,7 @@ def history(time):
             else:
                 continue
         videos.append(video)
-    videos.append({
-        'label': tag('下一页', 'yellow'),
-        'path': plugin.url_for('history', time=res['data']['cursor']['view_at'])
-    })
+    _append_next_page(videos, 'history', time=res['data']['cursor']['view_at'])
     return videos
 
 
@@ -1277,14 +1266,10 @@ def home(page):
         if not item['bvid']:
             continue
         if 'live.bilibili.com' in item['uri']:
-            if (item['room_info']['live_status'] == 1):
-                label = tag('【直播中】', 'red') + item['owner']['name'] + ' - ' + item['title']
-            else:
-                label = tag('【未直播】', 'grey') + item['owner']['name'] + ' - ' + item['title']
+            label = _live_status_label(item['room_info']['live_status'],
+                                        item['owner']['name'], item['title'])
             plot = f"UP: {item['owner']['name']}\tID: {item['owner']['mid']}\n房间号: {item['room_info']['room_id']}\n{item['watched_show']['text_large']}\n分区: {item['area']['area_name']}"
-            context_menu = [
-                (f"转到UP: {item['owner']['name']}", f"Container.Update({plugin.url_for('user', id=item['owner']['mid'])})")
-            ]
+            context_menu = _up_context_menu(item['owner']['name'], item['owner']['mid'])
             video = {
                 'label': label,
                 'path': plugin.url_for('live', id=item['url'].split('/')[-1]),
@@ -1301,10 +1286,7 @@ def home(page):
             if not video:
                 continue
         videos.append(video)
-    videos.append({
-        'label': tag('下一页', 'yellow'),
-        'path': plugin.url_for('home', page=page+1)
-    })
+    _append_next_page(videos, 'home', page=page+1)
     return videos
 
 
@@ -1358,10 +1340,7 @@ def dynamic(id, page):
                 continue
         videos.append(video)
     if int(page) * ps < res['data']['page']['count']:
-        videos.append({
-            'label': tag('下一页', 'yellow'),
-            'path': plugin.url_for('dynamic', id=id, page=int(page) + 1)
-        })
+        _append_next_page(videos, 'dynamic', id=id, page=int(page) + 1)
     return videos
 
 
@@ -1395,15 +1374,12 @@ def web_dynamic(page, offset):
         elif 'live_rcmd' in major:
             content = major['live_rcmd']['content']
             item = json.loads(content)
-            if item['live_play_info']['live_status'] == 1:
-                label = tag('【直播中】', 'red') + author + ' - ' + item['live_play_info']['title']
-            else:
-                label = tag('【未直播】', 'grey') + author + ' - ' + item['live_play_info']['title']
-            plot = f"UP: {author}\tID: {mid}\n房间号: {item['live_play_info']['room_id']}\n{item['live_play_info']['watched_show']['text_large']}\n"
-            plot += f"分区: {tag(item['live_play_info']['parent_area_name'], 'blue')} {tag(item['live_play_info']['area_name'], 'blue')}"
-            context_menu = [
-                (f"转到UP: {author}", f"Container.Update({plugin.url_for('user', id=mid)})")
-            ]
+            label = _live_status_label(item['live_play_info']['live_status'],
+                                        author, item['live_play_info']['title'])
+            plot = f"UP: {author}\tID: {mid}\n房间号: {item['live_play_info']['room_id']}\n{item['live_play_info']['watched_show']['text_large']}\n" \
+                   f"分区: {tag(item['live_play_info']['parent_area_name'], 'blue')} " \
+                   f"{tag(item['live_play_info']['area_name'], 'blue')}"
+            context_menu = _up_context_menu(author, mid)
             video = {
                 'label': label,
                 'path': plugin.url_for('live', id=item["live_play_info"]["room_id"]),
@@ -1422,10 +1398,7 @@ def web_dynamic(page, offset):
             continue
         videos.append(video)
     if res['data']['has_more']:
-        videos.append({
-            'label': tag('下一页', 'yellow'),
-            'path': plugin.url_for('web_dynamic', page=int(page)+1, offset=offset)
-        })
+        _append_next_page(videos, 'web_dynamic', page=int(page)+1, offset=offset)
     return videos
 
 

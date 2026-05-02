@@ -169,18 +169,20 @@ def fetch_url(url):
         return raw_fetch_url(url)
 
 
-def raw_get_api_data(url, data={}):
-    url = f'https://api.bilibili.com{url}'
+def _build_api_url(path, data=None):
+    """拼接完整 API URL，消除 raw/cached 分支的重复拼接逻辑"""
+    url = f'https://api.bilibili.com{path}'
     if data:
         url += '?' + urlencode(data)
-    return raw_fetch_url(url)
+    return url
+
+
+def raw_get_api_data(url, data={}):
+    return raw_fetch_url(_build_api_url(url, data))
 
 
 def cached_get_api_data(url, data={}):
-    url = f'https://api.bilibili.com{url}'
-    if data:
-        url += '?' + urlencode(data)
-    return cached_fetch_url(url)
+    return cached_fetch_url(_build_api_url(url, data))
 
 
 def get_api_data(url, data={}):

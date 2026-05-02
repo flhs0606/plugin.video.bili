@@ -45,7 +45,16 @@ class UrlRule:
         self.name = name
         self.options = options or {}
         rule = url_rule if url_rule == '/' else url_rule.rstrip('/') + '/?'
-        self._regex = re.compile('^' + rule.replace('<', '(?P<').replace('>', '>[^/]+?)') + '$')
+        params = re.findall(r'\<(.+?)\>', url_rule)
+        if params:
+            # 最后一个参数允许匹配 /（视频标题、搜索关键词等可能含斜杠）
+            last = params[-1]
+            prefix, suffix = rule.split('<%s>' % last, 1)
+            rule = prefix.replace('<', '(?P<').replace('>', '>[^/]+?)') + \
+                   '(?P<%s>.+?)' % last + suffix
+        else:
+            rule = rule.replace('<', '(?P<').replace('>', '>[^/]+?)')
+        self._regex = re.compile('^' + rule + '$')
         self._format = url_rule.replace('<', '{').replace('>', '}')
         self._params = re.findall(r'\<(.+?)\>', url_rule)
 
@@ -269,7 +278,7 @@ class Plugin:
                         del storage[key]
                 result = function(*args, **kwargs)
                 storage[key] = [time.time(), result]
-                storage.sync()
+                # 不显式 sync，依赖 _dirty 标记 + 进程退出 atexit / close
                 return result
             return wrapper
         return decorating_function

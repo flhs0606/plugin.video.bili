@@ -260,44 +260,47 @@ def generate_mpd(dash):
         '\t<Period>\n'
     ]
 
+    def _build_adaptation_set(items, mime_type, extra_attrs=''):
+        """统一构造 AdaptationSet + Representation，消除 video/audio 重复"""
+        lines = ['\t\t<AdaptationSet mimeType="%s" startWithSAP="1" segmentAlignment="true"%s>\n'
+                 % (mime_type, extra_attrs)]
+        for item in items:
+            base_url = item['baseUrl'].replace('&', '&amp;')
+            attrs = []
+            if 'bandwidth' in item:
+                attrs.append('bandwidth="%s"' % item['bandwidth'])
+            if 'codecs' in item:
+                attrs.append('codecs="%s"' % item['codecs'])
+            if 'frameRate' in item:
+                attrs.append('frameRate="%s"' % item['frameRate'])
+            if 'height' in item:
+                attrs.append('height="%s"' % item['height'])
+            if 'width' in item:
+                attrs.append('width="%s"' % item['width'])
+            if 'id' in item:
+                attrs.append('id="%s"' % item['id'])
+            if 'audioSamplingRate' in item:
+                attrs.append('audioSamplingRate="%s"' % item['audioSamplingRate'])
+            lines.append('\t\t\t<Representation %s>\n' % ' '.join(attrs))
+            lines.append('\t\t\t\t<BaseURL>%s</BaseURL>\n' % base_url)
+            for bu in item.get('backup_url', []) or []:
+                lines.append('\t\t\t\t<BaseURL>%s</BaseURL>\n' % bu.replace('&', '&amp;'))
+            lines.append('\t\t\t\t<SegmentBase indexRange="%s">\n'
+                         % item['SegmentBase']['indexRange'])
+            lines.append('\t\t\t\t\t<Initialization range="%s"></Initialization>\n'
+                         % item['SegmentBase']['Initialization'])
+            lines.append('\t\t\t\t</SegmentBase>\n')
+            lines.append('\t\t\t</Representation>\n')
+        lines.append('\t\t</AdaptationSet>\n')
+        return lines
+
     # video
-    mpd_lines.append('\t\t<AdaptationSet mimeType="video/mp4" startWithSAP="1" scanType="progressive" segmentAlignment="true">\n')
-    for video in videos:
-        base_url = video['baseUrl'].replace('&', '&amp;')
-        mpd_lines.extend([
-            '\t\t\t<Representation bandwidth="', str(video['bandwidth']), '" codecs="', video['codecs'], '" frameRate="', video['frameRate'], '" height="', str(video['height']), '" width="', str(video['width']), '" id="', str(video['id']), '">\n',
-            '\t\t\t\t<BaseURL>', base_url, '</BaseURL>\n',
-        ])
-        if 'backup_url' in video and video['backup_url']:
-            for bu in video['backup_url']:
-                mpd_lines.append('\t\t\t\t<BaseURL>' + bu.replace('&', '&amp;') + '</BaseURL>\n')
-        mpd_lines.extend([
-            '\t\t\t\t<SegmentBase indexRange="', video['SegmentBase']['indexRange'], '">\n',
-            '\t\t\t\t\t<Initialization range="' + video['SegmentBase']['Initialization'] + '"></Initialization>\n',
-            '\t\t\t\t</SegmentBase>\n',
-            '\t\t\t</Representation>\n'
-        ])
-    mpd_lines.append('\t\t</AdaptationSet>\n')
+    mpd_lines.extend(_build_adaptation_set(
+        videos, 'video/mp4', ' scanType="progressive"'))
 
     # audio（按质量降序排列，inputstream.adaptive 会优先选择第一个）
-    mpd_lines.append('\t\t<AdaptationSet mimeType="audio/mp4" startWithSAP="1" segmentAlignment="true" lang="und">\n')
-    for audio in audios:
-        sample_rate = str(audio.get('audioSamplingRate', '44100'))
-        base_url = audio['baseUrl'].replace('&', '&amp;')
-        mpd_lines.extend([
-            '\t\t\t<Representation audioSamplingRate="', sample_rate, '" bandwidth="', str(audio['bandwidth']), '" codecs="', audio['codecs'], '" id="', str(audio['id']), '">\n',
-            '\t\t\t\t<BaseURL>', base_url, '</BaseURL>\n',
-        ])
-        if 'backup_url' in audio and audio['backup_url']:
-            for bu in audio['backup_url']:
-                mpd_lines.append('\t\t\t\t<BaseURL>' + bu.replace('&', '&amp;') + '</BaseURL>\n')
-        mpd_lines.extend([
-            '\t\t\t\t<SegmentBase indexRange="', audio['SegmentBase']['indexRange'], '">\n',
-            '\t\t\t\t\t<Initialization range="' + audio['SegmentBase']['Initialization'] + '"></Initialization>\n',
-            '\t\t\t\t</SegmentBase>\n',
-            '\t\t\t</Representation>\n'
-        ])
-    mpd_lines.append('\t\t</AdaptationSet>\n')
+    mpd_lines.extend(_build_adaptation_set(
+        audios, 'audio/mp4', ' lang="und"'))
 
     mpd_lines.append('\t</Period>\n</MPD>\n')
 
