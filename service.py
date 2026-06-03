@@ -1,25 +1,48 @@
 # -*- coding: utf-8 -*-
-from monitor import BilibiliMonitor
-from live_danmaku import stop_all_live_danmaku
+"""Long-lived service: host the static MPD HTTP server.
+
+In v0.4.0 the server only serves `{cid}.mpd` from
+`special://temp/plugin.video.bili/` (see http_server.py). On exit we
+stop all live-danmaku WebSocket threads so Kodi shutdown is clean.
+"""
 import xbmc
+from http_server import get_http_server
+from live.danmaku import stop_all_live_danmaku
 
 
 def run():
-    sleep_time = 3  # 提高退出响应速度（原10s太慢）
-    monitor = BilibiliMonitor()
+    from utils import getSetting  # local import; utils is fine in service
+    port = getSetting('server_port') or 54321
+    httpd = get_http_server(port=int(port))
+    if not httpd:
+        xbmc.log(
+            '[plugin.video.bili] service: failed to bind 0.0.0.0:%s'
+            % port, xbmc.LOGERROR,
+        )
+        return
 
-    monitor.remove_temp_dir()
+    monitor = xbmc.Monitor()
+    xbmc.log(
+        '[plugin.video.bili] service: MPD server listening on 0.0.0.0:%s'
+        % port, xbmc.LOGINFO,
+    )
 
-    while not monitor.abortRequested():
-        if monitor.waitForAbort(sleep_time):
-            break
-
-    # 退出前停止所有直播弹幕线程，避免 WebSocket 残留阻塞 Kodi
-    xbmc.log('[plugin.video.bili] service shutting down, stopping live danmaku...', xbmc.LOGINFO)
-    stop_all_live_danmaku()
-
-    if monitor.httpd:
-        monitor.shutdown_httpd()
+    try:
+        while not monitor.abortRequested():
+            # handle_request() is blocking with no timeout; pair with
+            # waitForAbort(0.5) so the abort flag is checked ~twice per
+            # second. The .5s ceiling is invisible to Kodi (HTTP requests
+            # complete in milliseconds).
+            httpd.handle_request()
+            if monitor.waitForAbort(0.5):
+                break
+    finally:
+        xbmc.log('[plugin.video.bili] service: shutting down', xbmc.LOGINFO)
+        try:
+            httpd.server_close()
+        except Exception:
+            pass
+        stop_all_live_danmaku()
 
 
 if __name__ == '__main__':
