@@ -1,5 +1,6 @@
 # -*- coding:utf-8 -*-
 """直播：分区、关注、播放。"""
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import urlencode
 
 from core import plugin, xbmc, xbmcgui
@@ -311,60 +312,65 @@ def followingLive(page):
 
 @plugin.route('/live/<id>/')
 def live(id):
-    """Adaptive HLS only. Force fmp4 (format=1) at multi-QN levels;
-    on no fmp4, retry with all formats. Prefer master_url (m3u8 from
-    http_hls) over urls[0] (raw m4s) as inputstream.adaptive's path.
+    """Fetch a live stream and hand it to Kodi ffmpeg demuxer.
+
+    Performance: launch the multi-QN ladder concurrently and stop at
+    the first success. Worst case was previously ~10 s (5 QN × 2
+    format filters, sequential). With ThreadPoolExecutor the wall
+    time is bounded by the slowest single request (~2 s on a slow
+    network) plus the dance between format=1 and the protocol=0
+    fallback.
     """
     qn = getSetting('live_resolution')
 
-    def _fetch(room_id, stream_qn, fmt_filter):
+    def _fetch(room_id, stream_qn, fmt_filter, protocol='0,1'):
         params = (
             'room_id={}&no_playurl=0&mask=1&qn={}&platform=web'
-            '&protocol=0,1&format={}&codec=0,1,2'
+            '&protocol={}&format={}&codec=0,1,2'
             '&dolby=5&ptype=8&panorama=1'
-        ).format(room_id, stream_qn, fmt_filter)
+        ).format(room_id, stream_qn, protocol, fmt_filter)
         r = fetch_url(
             'https://api.live.bilibili.com/xlive/web-room/v2/index/getRoomPlayInfo?' + params
         )
         if r['code'] != 0 or not r.get('data', {}).get('playurl_info'):
-            xbmc.log(
-                '[live] _fetch room=%s qn=%s fmt=%s -> empty (code=%s, '
-                'playurl_info=%s)' % (
-                    room_id, stream_qn, fmt_filter, r.get('code'),
-                    r.get('data', {}).get('playurl_info'),
-                ),
-                xbmc.LOGDEBUG,
-            )
-            return None
-        return r['data']['playurl_info']['playurl']['stream']
+            return (room_id, stream_qn, fmt_filter, protocol, None)
+        return (room_id, stream_qn, fmt_filter, protocol,
+                r['data']['playurl_info']['playurl']['stream'])
 
-    # ── 强制 fmp4 (format=1) 多 QN 降级 ──
-    streams = None
-    for try_qn in (qn, 400, 250, 150, 80):
-        streams = _fetch(id, try_qn, '1')
-        if streams:
-            break
-    # ── 无 fmp4 → 回退所有 format (0,1,2) ──
+    def _try_concurrent(attempts):
+        """Run a list of (qn, fmt, protocol) attempts in parallel.
+        Return the first non-None result. Bounded by the slowest
+        single request, not by their sum.
+        """
+        with ThreadPoolExecutor(max_workers=len(attempts)) as ex:
+            futures = {ex.submit(_fetch, id, q, f, p): (q, f, p)
+                       for (q, f, p) in attempts}
+            for fut in as_completed(futures):
+                _, _, _, _, streams = fut.result()
+                if streams:
+                    return streams
+        return None
+
+    # ── Phase 1: 并发试 format=1 (fmp4) 多 QN (用 setting 的 qn) ──
+    streams = _try_concurrent(
+        [(qn, '1', '0,1')] +
+        [(alt_qn, '1', '0,1') for alt_qn in (400, 250, 150, 80)]
+    )
+    # ── Phase 2: format=0,1,2 多 QN (并发) ──
     if not streams:
-        for try_qn in (qn, 400, 250, 150, 80):
-            streams = _fetch(id, try_qn, '0,1,2')
-            if streams:
-                break
-    # ── 仍无 → 最终 fallback: protocol=0 (仅 http_stream) + 全 format ──
+        streams = _try_concurrent(
+            [(qn, '0,1,2', '0,1')] +
+            [(alt_qn, '0,1,2', '0,1') for alt_qn in (400, 250, 150, 80)]
+        )
+    # ── Phase 3: protocol=0 fallback (rare; serial is fine) ──
     if not streams:
         xbmc.log(
             '[live] %s all QN/format combos exhausted; trying '
             'protocol=0 fallback' % id, xbmc.LOGINFO,
         )
         for try_qn in (qn, 400, 250, 150, 80):
-            r = fetch_url(
-                'https://api.live.bilibili.com/xlive/web-room/v2/index/'
-                'getRoomPlayInfo?room_id=%s&no_playurl=0&mask=1&qn=%s'
-                '&platform=web&protocol=0&format=0,1,2&codec=0,1,2'
-                '&dolby=5&ptype=8&panorama=1' % (id, try_qn)
-            )
-            if r.get('code') == 0 and r.get('data', {}).get('playurl_info'):
-                streams = r['data']['playurl_info']['playurl']['stream']
+            _, _, _, _, streams = _fetch(id, try_qn, '0,1,2', protocol='0')
+            if streams:
                 break
     if not streams:
         xbmc.log('[live] no playurl for room_id=%s' % id, xbmc.LOGERROR)
