@@ -1,294 +1,445 @@
-# Restore `inputstream.adaptive` as the only playback path
+# Restore `inputstream.adaptive` (VOD) — drop the local HTTP proxy
 
 **Date**: 2026-06-03
 **Status**: Design proposal (pre-implementation)
 **Target version**: 0.4.0
+**Supersedes**: v0.3.0 (the failed "no-inputstream" build)
 
 ## 1. Background & motivation
 
-v0.3.0 removed all `inputstream.*` addons in favor of Kodi's built-in ffmpeg
-dashdemuxer. The local HTTP proxy (`/proxy/{id}.mp4`) is the only
-authentication-header injection point, and Kodi's ffmpeg is the only
-MPEG-DASH consumer.
+The v0.3.0 release removed all `inputstream.*` addons in favor of Kodi's
+built-in ffmpeg dashdemuxer, with a local HTTP proxy (`/proxy/{id}.mp4`)
+as the only authentication-header injection layer. This design does not
+work in practice — every video class (AVC / HEVC / DV / Hi-Res FLAC) and
+both VOD and live fail in some way.
 
-User feedback: **"离开 inputstream.adaptive 一直播放失败"** — under v0.3.0
-the playback path is broken in practice. Symptoms reported span every video
-class (AVC / HEVC / DV / Hi-Res FLAC) and both VOD and live. The user wants
-`inputstream.adaptive` re-introduced as the **only** playback path, replacing
-the ffmpeg-direct route. `inputstream.ffmpegdirect` is to be removed
-permanently (no fallback path).
+A reference of the **known-good v0.1.0 build** is preserved at
+`E:\Project\plugin.video.bili-origin\`. That build uses
+`inputstream.adaptive` directly against B 站 CDN URLs (no segment
+proxy), with two small header properties (`manifest_headers` and
+`stream_headers`) for Referer, and a `<SegmentBase indexRange=…>` block
+in the MPD so the adaptive demuxer can splice init/media ranges
+precisely.
+
+This design **restores the v0.1.0 VOD architecture verbatim** and keeps
+the v0.3.0-style `manifest_type='hls'` live path (with `ffmpegdirect`
+*removed*). The segment-proxy half of the local HTTP server is deleted;
+the static-file MPD half is kept (inputstream.adaptive reads the MPD
+through it; segments go straight to B 站 CDN with `stream_headers`).
+The `xbmc.service` extension point stays but the BilibiliMonitor /
+restart_httpd machinery is removed.
 
 ## 2. Goals
 
-1. Restore `inputstream.adaptive` as the **sole** playback path for VOD and
-   live. Both modes go through `ListItem` `inputstream.*` properties.
-2. Keep the local HTTP proxy (`http_server.py` + `playback/proxy.py`) as the
-   **authentication-header injection layer** — inputstream.adaptive fetches
-   segments through `/proxy/{id}.mp4` instead of B 站 CDN directly. This
-   isolates Cookie / Referer / User-Agent management in one place.
-3. Delete `playback/m3u8.py` — no longer needed (inputstream.adaptive consumes
-   MPD directly).
-4. Delete all `ffmpeg pipe` paths for DASH playback (MPD). One exception: see
-   §4.4 (`durl` legacy path), which is a Kodi-native MP4 demuxer route that
-   happens to use the same `url|headers` syntax; it does **not** depend on
-   ffmpegdirect and is out of scope for removal.
-5. Declare `inputstream.adaptive` as a hard dependency in `addon.xml`.
+1. VOD playback goes through `inputstream.adaptive` with
+   `manifest_type='mpd'`, `manifest_headers=Referer=…`, and
+   `stream_headers=Referer=…` (referer-only, matching v0.1.0).
+2. MPD is generated with **per-Representation `<SegmentBase indexRange>`
+   + `<Initialization range>`** (v0.1.0 structure) so inputstream.adaptive
+   can do precise byte-range splices. BaseURL is the B 站 CDN URL
+   directly; no local proxy is involved.
+3. Live playback goes through `inputstream.adaptive` with
+   `manifest_type='hls'`, `manifest_update_params='full'`, and the same
+   Referer-only header pair. We force `format=1` (fmp4) at the playurl
+   API — FLV is no longer consumed.
+4. The local HTTP proxy and its proxy registry are **deleted**. The
+   `xbmc.service` extension stays (it now hosts a tiny static-file
+   MPD server, see §5.5/§5.6); the proxy half of that server is gone.
+5. `inputstream.adaptive` is declared as an **optional** dependency
+   (`optional="true"`); the menu `index()` detects the addon and prompts
+   the user to install it (v0.1.0 behaviour). v0.3.0's "hard dependency"
+   decision is reverted.
 
 ## 3. Non-goals
 
-- No automatic version detection / downgrade to `ffmpegdirect` if
-  `inputstream.adaptive` is missing. The addon just refuses to start.
-- No HTTPS on the local proxy (127.0.0.1 HTTP is acceptable).
-- No UI toggles for the playback engine — `enable_dash` only decides MPD vs
-  `durl` (DASH vs legacy MP4).
+- No fallback to `inputstream.ffmpegdirect` (v0.1.0 had it for live
+  fmp4/ts; v0.4.0 routes live through `inputstream.adaptive` instead and
+  ffmpegdirect is gone).
+- No ffmpeg pipe paths (`url|headers`, `reconnect=…`) for live streams.
+- No local proxy / port binding / 54321 server.
+- No HTTPS on a proxy (we have no proxy).
+- No UI toggles for the playback engine.
 
 ## 4. Architecture
 
-### 4.1 Point of contact
-
-`plugin_compat._dict_to_li` already forwards `properties` to
-`ListItem.setProperty`. We need every key starting with `inputstream.` to
-land on the ListItem verbatim. **Current code already does this** (see
-`plugin_compat.py:179`). The change is at the *caller* — `routes/video.py`
-and `routes/live.py` must populate these properties.
-
-### 4.2 VOD request flow
+### 4.1 VOD request flow
 
 ```
 addon.py (one-shot)
   └─ routes/video.py:video(id, cid, ...)
      ├─ /x/player/wbi/playurl  →  data['dash']
-     ├─ playback/mpd.generate_mpd()   →  MPD XML
-     │     BaseURL = http://127.0.0.1:PORT/proxy/{seg_id}.mp4
-     │     (existing _build_video_as / _build_audio_as / _video_color_props
-     │      are kept; only ffmpeg-CLI-only hacks and `use_proxy=False`
-     │      branch are removed)
-     ├─ write to special://temp/plugin.video.bili/v.{cid}.mpd
-     ├─ playback.proxy.unregister_all()
+     ├─ playback/mpd.generate_mpd(dash)  →  MPD XML
+     │     BaseURL = <B站 CDN baseUrl>   (direct, no proxy)
+     │     each Representation:
+     │       <SegmentBase indexRange="…">
+     │         <Initialization range="…"/>
+     │       </SegmentBase>
+     │     audio AdaptationSet has lang="und"
+     ├─ write to special://temp/plugin.video.bili/{cid}.mpd
      └─ plugin.set_resolved_url({
-            path:   "http://127.0.0.1:{port}/v.{cid}.mpd",
+            path: 'http://127.0.0.1:54321/{cid}.mpd',  # served by a static-file-only http server
             properties: {
                 'inputstream': 'inputstream.adaptive',
                 'inputstream.adaptive.manifest_type': 'mpd',
                 'inputstream.adaptive.manifest_headers':
-                    'User-Agent=...&Referer=...&Cookie=...',  # see §5.2
-                'inputstream.adaptive.original_mediatype': 'video',
-                'inputstream.adaptive.stream_selection_type': 'manual-osd',
+                    'Referer=https://www.bilibili.com',
+                'inputstream.adaptive.stream_headers':
+                    'Referer=https://www.bilibili.com',
             },
             is_playable: True,
         }, subtitles=ass)
-
-service.py (long-lived)
-  └─ http_server.py
-     ├─ GET /v.{cid}.mpd        → serve the on-disk MPD file
-     └─ GET /proxy/{id}.mp4     → lookup(seg_id) → inject headers →
-                                    stream B 站 CDN
 ```
 
-inputstream.adaptive's responsibilities: MPD parse, segment Range
-construction, decoder selection, HDR/DV signaling. Our plugin's
-responsibilities: fetch B 站 playurl, build the MPD XML, write the MPD file,
-populate `inputstream.*` properties on the ListItem.
+> The local HTTP server is **static-file only** in v0.4.0 (see §5.5). It
+> serves `{cid}.mpd` from `special://temp/plugin.video.bili/` and nothing
+> else. No `/proxy/...` endpoint exists. BaseURL inside the MPD is the
+> B 站 CDN URL directly — inputstream.adaptive fetches segments with its
+> own `stream_headers` (Referer), without any local hop.
 
-### 4.3 Live request flow
+### 4.2 Live request flow
 
 ```
 addon.py (one-shot)
   └─ routes/live.py:live(id)
-     ├─ getRoomPlayInfo (with multi-QN fallback) → playurl_info
-     ├─ playback.live.choose_live_resolution()
-     ├─ pick first fmp4 URL (format=1, codec=avc preferred)
+     ├─ getRoomPlayInfo → playurl_info
+     │   (format filter forces fmp4: format=1; multi-QN fallback)
+     ├─ playback.live.choose_live_resolution()  → best fmp4 stream
      └─ plugin.set_resolved_url({
-            path:   "<fmp4_cdn_url>",
+            path:   <fmp4 cdn url>,
             properties: {
                 'inputstream': 'inputstream.adaptive',
                 'inputstream.adaptive.manifest_type': 'hls',
                 'inputstream.adaptive.manifest_update_params': 'full',
                 'inputstream.adaptive.manifest_headers':
-                    'User-Agent=...&Referer=...&Cookie=...',
+                    'Referer=https://www.bilibili.com',
+                'inputstream.adaptive.stream_headers':
+                    'Referer=https://www.bilibili.com',
             },
             is_playable: True,
             is_live:    True,
         }, subtitles=live_ass)
 ```
 
-Notes:
-- `inputstream.adaptive` consumes the fmp4 manifest as HLS and refreshes it
-  via `manifest_update_params=full` (live mode). FLV is no longer a target
-  codec — if B 站 only returns FLV for a room, we discard and request
-  fmp4 explicitly (`format=1`).
-- Live danmaku (live/danmaku.py) is unchanged — still produces an external
-  `.ass` and passes it via `subtitles=live_ass`.
+FLV is **not** consumed. If the playurl API returns only FLV entries
+after the multi-QN fallback, the route re-fetches with
+`format=0,1,2` (all formats); if even that has no fmp4, log + abort
+with a Kodi notification.
 
-### 4.4 `durl` legacy path
+### 4.3 `durl` legacy path
 
-If the B 站 API returns `data['durl']` (no `data['dash']`) — the legacy
-non-segmented MP4 stream, used for some older 1080P titles — we keep a
-**direct pipe** route:
-
-```python
-plugin.set_resolved_url({
-    'path': f'{durl_url}|{hdr}',
-    'is_playable': True,
-}, subtitles=ass)
-```
-
-This is **not** inputstream.adaptive (adaptive does not consume a single
-durl URL) and **not** inputstream.ffmpegdirect (we never re-introduce that
-addon). Kodi 21's built-in ffmpeg MP4 demuxer consumes the pipe directly.
-The `durl` URL is rare in 2026 — modern B 站 playurl almost always
-returns `dash` — but a single non-DASH fallback remains so the addon does
-not blank-screen on legacy titles.
+Unchanged from v0.3.0. `data['durl']` triggers
+`path = durl_url|Referer=https://www.bilibili.com`. Not inputstream.
+Not ffmpegdirect. Kodi's built-in ffmpeg MP4 demuxer handles it.
 
 ## 5. Module changes
 
 ### 5.1 `addon.xml`
 
-Add hard dependency:
-
 ```xml
-<import addon="inputstream.adaptive" version="21.5.0"/>
+<requires>
+  <import addon="xbmc.python" version="3.0.0"/>
+  <import addon="script.module.requests" version="2.12.4"/>
+  <import addon="script.module.qrcode" version="5.3"/>
+  <import addon="inputstream.adaptive" optional="true"/>
+</requires>
+<extension point="xbmc.python.pluginsource" library="addon.py">
+  <provides>video</provides>
+</extension>
+<extension point="xbmc.service" library="service.py"/>
 ```
+
+`xbmc.service` stays — it still hosts the static-file MPD server
+(§5.5/§5.6). The proxy half of that server is gone but the long-lived
+process is required to bind 54321.
 
 `news` block:
 
 ```
 v0.4.0
-- Restore inputstream.adaptive as the only playback path for VOD and live.
-  Hard dependency on inputstream.adaptive ≥ 21.5.0.
-- Reintroduce manifest_headers on ListItem for B 站 CDN authentication
-  fallback (still goes through local proxy by default).
-- Remove playback/m3u8.py (no longer needed) and all ffmpeg pipe paths.
+- Restore v0.1.0 VOD path: inputstream.adaptive + per-representation
+  SegmentBase + Referer-only manifest_headers / stream_headers.
+  BaseURL points at B 站 CDN directly (no segment proxy).
+- Live routed through inputstream.adaptive (manifest_type='hls',
+  manifest_update_params='full'); ffmpegdirect removed.
+- Delete playback/proxy.py and monitor.py. http_server.py and
+  service.py stay but are simplified — the local server only serves
+  the static MPD file; segments are fetched directly by adaptive.
+  inputstream.adaptive is now optional; menu guides the install.
 ```
 
-### 5.2 `playback/mpd.py` — rewrite
+### 5.2 `playback/mpd.py` — restore v0.1.0 structure
 
-Drop the `use_proxy=False` ffmpeg-CLI branch (no caller uses it). Default
-`use_proxy=True`. Keep the proxy/BaseURL construction. Strip the dashdemux
-hacks (every comment about `ffmpeg dashdec`). Add a new public function
-`build_manifest_headers(cookie, ua, referer) -> str` that returns the
-`User-Agent=...&Referer=...&Cookie=...` string for the
-`inputstream.adaptive.manifest_headers` ListItem property. The string is
-`&`-delimited key=value pairs with each value **URL-encoded** via
-`urllib.parse.quote(value, safe='')` — this is required because the User-
-Agent contains spaces, colons, slashes, and parentheses that would break
-naive `&` splitting. `routes/video.py` and `routes/live.py` both call this
-helper, keeping the proxy-header format and the manifest_headers format in
-sync (mitigates the risk in §9).
+This is the v0.1.0 implementation, recovered verbatim from
+`E:\Project\plugin.video.bili-origin\video_utils.py:253-307`. It is the
+exact code that was verified to play; the v0.3.0 rewrite that dropped
+`<SegmentBase>` is reverted. The function signature is restored to
+`generate_mpd(dash)` (one argument) — the v0.3.0 cookie/ua/port params
+go away because BaseURL no longer points at a proxy.
+
+```python
+def generate_mpd(dash):
+    videos = choose_resolution(dash['video'])
+    audios = sorted(dash['audio'], key=lambda x: x.get('id', 0), reverse=True)
+
+    mpd_lines = [
+        '<?xml version="1.0" encoding="UTF-8"?>\n',
+        '<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" '
+        'profiles="urn:mpeg:dash:profile:isoff-on-demand:2011" '
+        'type="static" mediaPresentationDuration="PT',
+        str(dash['duration']),
+        'S" minBufferTime="PT', str(dash['minBufferTime']), 'S">\n',
+        '\t<Period>\n',
+    ]
+
+    def _build_adaptation_set(items, mime_type, extra_attrs=''):
+        lines = ['\t\t<AdaptationSet mimeType="%s" startWithSAP="1" '
+                 'segmentAlignment="true"%s>\n' % (mime_type, extra_attrs)]
+        for item in items:
+            base_url = item['baseUrl'].replace('&', '&amp;')
+            attrs = []
+            for k in ('bandwidth', 'codecs', 'frameRate', 'height',
+                      'width', 'id', 'audioSamplingRate'):
+                if k in item:
+                    attrs.append('%s="%s"' % (k, item[k]))
+            lines.append('\t\t\t<Representation %s>\n' % ' '.join(attrs))
+            lines.append('\t\t\t\t<BaseURL>%s</BaseURL>\n' % base_url)
+            for bu in item.get('backup_url', []) or []:
+                lines.append('\t\t\t\t<BaseURL>%s</BaseURL>\n' %
+                             bu.replace('&', '&amp;'))
+            lines.append('\t\t\t\t<SegmentBase indexRange="%s">\n'
+                         % item['SegmentBase']['indexRange'])
+            lines.append('\t\t\t\t\t<Initialization range="%s">'
+                         '</Initialization>\n'
+                         % item['SegmentBase']['Initialization'])
+            lines.append('\t\t\t\t</SegmentBase>\n')
+            lines.append('\t\t\t</Representation>\n')
+        lines.append('\t\t</AdaptationSet>\n')
+        return lines
+
+    mpd_lines.extend(_build_adaptation_set(
+        videos, 'video/mp4', ' scanType="progressive"'))
+    mpd_lines.extend(_build_adaptation_set(
+        audios, 'audio/mp4', ' lang="und"'))
+    mpd_lines.append('\t</Period>\n</MPD>\n')
+    return ''.join(mpd_lines)
+```
+
+**Note on v0.3.0 enhancements that we are dropping on purpose**:
+- HDR10 / DV / HLG `<EssentialProperty>` and `<SupplementalProperty>`
+  blocks (`_video_color_props`) — v0.1.0 did not have these and the user
+  reports v0.1.0 plays DV / HDR correctly. The CICP signaling in
+  inputstream.adaptive comes from the Representation `codecs` and
+  container metadata, not from MPD `<EssentialProperty>`. We can
+  re-introduce them in a follow-up spec if needed.
+- Multi-adaptation-set audio grouping (AAC / Dolby / FLAC) — v0.1.0 had
+  one combined `audios` list, sorted by id. v0.3.0 separated them; we
+  revert to the simpler v0.1.0 grouping.
+
+`routes/video.py` is the **only** caller of `generate_mpd()`. The
+helper that built the manifest_headers string is no longer needed (the
+string is constant `'Referer=https://www.bilibili.com'` and lives in
+`routes/video.py`).
 
 ### 5.3 `playback/m3u8.py` — delete
 
-`routes/video.py` will no longer import from this module. Git history
-preserves the file if a rollback is ever needed.
+Not imported by anyone in v0.4.0.
 
-### 5.4 `routes/video.py`
+### 5.4 `playback/proxy.py` — delete
 
-- Remove `from playback.m3u8 import write_m3u8_files` and the entire
-  m3u8-build branch in `video()`.
-- Replace with: write MPD via `generate_mpd(dash, cookie, ua, port,
-  use_proxy=True)` → write file → `set_resolved_url` with inputstream props.
-- `audio_only` branch: keep the `dash` path (fmp4 single-track pipe still
-  works; this is non-adaptive audio-only, not a ffmpegdirect dependency).
+No callers in v0.4.0.
 
-### 5.5 `routes/live.py`
+### 5.5 `http_server.py` — replace with a static-file-only MPD server
 
-- Remove `_ensure_hls_ext` (no ffmpeg HLS demuxer involved anymore).
-- Remove the FLV branch and the fmp4/ts pipe branch.
-- Single output: inputstream.adaptive `manifest_type='hls'` for fmp4.
-- If `_fetch(...)` returns streams that contain **only** FLV format entries
-  (i.e. `choose_live_resolution` would return `format_name='flv'`), do a
-  re-fetch in `routes/live.py` with `format=1` (fmp4 only) before giving
-  up. If the re-fetch still returns no fmp4, log + abort with a Kodi
-  notification — do not fall back to FLV pipe.
+`http_server.py` is **kept** but gutted: it serves only `.mpd` files
+from `special://temp/plugin.video.bili/`. The `/proxy/...` route and the
+`BilibiliRequestHandler._proxy_cdn` are deleted. The `playback.proxy`
+lookup is no longer needed. The `requests` lazy import goes away. The
+path-traversal guard (`_safe_file_path`) is kept.
 
-### 5.6 `playback/proxy.py` — unchanged
+This is needed because `inputstream.adaptive` in Kodi 21 reads the
+manifest URL via Kodi's HTTP client, which has known issues opening
+`file://` or `special://` URLs through inputstream's parser. The proven
+shape — `http://127.0.0.1:54321/{cid}.mpd` — requires a tiny local
+HTTP endpoint. We keep that endpoint **without** keeping the segment
+proxy. Risk: `inputstream.adaptive` may, in some Kodi 21 builds, accept
+`file://` directly. If a future smoke test confirms that, this server
+can be deleted too; the spec notes it as a follow-up but does not
+defer it.
 
-Still required: inputstream.adaptive's segment requests go through
-`/proxy/{id}.mp4`. `unregister_all()` is invoked at the start of every
-`video()` call (before the new MPD is written) so stale seg_ids from a
-previous play don't leak in.
+The host process is `service.py` (kept, see §5.6).
 
-### 5.7 `http_server.py` — minor
+### 5.6 `service.py` — keep, but simplify
 
-- Verify `Accept-Ranges: bytes` is present in every `/proxy/{id}.mp4`
-  response branch (the existing code emits it unconditionally, but confirm
-  in the final review that it is not stripped for HEAD/206 paths).
-  inputstream.adaptive uses Range heavily; the upstream CDN already sends
-  it but we make sure it survives our header pass-through.
-- Keep the path-traversal guard (`_safe_file_path`).
+`service.py` stays because the static-file MPD server in §5.5 still
+needs a host process. The proxy-related work (BilibiliMonitor,
+restart_httpd, shutdown_httpd) is removed. The lifecycle is just:
 
-### 5.8 `plugin_compat.py` — no change
+```python
+from xbmc import Monitor
+from live.danmaku import stop_all_live_danmaku
+from http_server import get_http_server
 
-`setProperty('inputstream.adaptive.*', value)` already works through the
-existing `properties` dict iteration in `_dict_to_li` (lines 175–180).
+def run():
+    httpd = get_http_server(port=54321)
+    monitor = Monitor()
+    if httpd:
+        while not monitor.abortRequested:
+            httpd.handle_request()  # non-blocking serve
+            if monitor.waitForAbort(0.5):
+                break
+        httpd.server_close()
+    stop_all_live_danmaku()
+```
 
-### 5.9 `resources/settings.xml` — minor
+### 5.7 `monitor.py` — delete
 
-- `enable_dash` keeps its current meaning: when true the plugin calls
-  playurl with `fnval=4048` and consumes `data['dash']` (MPD via
-  inputstream.adaptive); when false it calls with `fnval=1` and the API
-  may return `data['durl']` (legacy MP4 pipe, see §4.4) or low-quality
-  DASH — either way we feed it through the matching path.
-- Add a help string on the `enable_dash` setting pointing to the
-  `inputstream.adaptive` install location (Kodi 21 ships it in the
-  official repo).
+The BilibiliMonitor class exists only to host the proxy (`shutdown_httpd`,
+`restart_httpd`, `remove_temp_dir`). With §5.5's server now living in
+`service.py` directly, `monitor.py` has no callers.
 
-### 5.10 `resources/language/.../strings.po`
+### 5.8 `routes/video.py`
 
-Add localized string for the help text and a notice when
-`inputstream.adaptive` is detected missing at startup.
+The VOD path becomes a near-clone of v0.1.0 `routes.py:video()`:
+- Use `generate_mpd(dash)` (one-arg, restored signature).
+- Write MPD to `special://temp/plugin.video.bili/{cid}.mpd`.
+- `path` is the **local MPD file path**:
+  `xbmcvfs.translatePath('special://temp/plugin.video.bili/{cid}.mpd')`.
+  inputstream.adaptive opens it directly via Kodi's VFS — no HTTP hop,
+  no `127.0.0.1` URL.
+- `properties` carries the four `inputstream.*` keys from §4.1.
+- `audio_only` branch unchanged: `path = audio_url|Referer=…`.
+- `durl` branch unchanged: `path = durl_url|Referer=…`.
+
+### 5.9 `routes/live.py`
+
+- Remove `_ensure_hls_ext`.
+- Force `format=1` (fmp4) in the initial `_fetch`; on failure fall back
+  to `format=0,1,2`; on no fmp4 found, log + notify + return.
+- Single output: inputstream.adaptive `manifest_type='hls'` with
+  `manifest_update_params='full'` and the two Referer headers.
+
+### 5.10 `routes/menu.py:index()` — add the install-prompt
+
+Reintroduce the v0.1.0 detection block before returning items:
+
+```python
+if (getSetting('enable_dash') == 'true'
+        and not xbmc.getCondVisibility('System.HasAddon(inputstream.adaptive)')):
+    if xbmcgui.Dialog().yesno('安装插件', '使用 dash 功能需要安装 '
+                              'inputstream.adaptive 插件，是否安装？'):
+        xbmc.executebuiltin('InstallAddon(inputstream.adaptive)')
+    elif xbmcgui.Dialog().yesno('取消安装', '不使用 dash 请到设置中关闭'):
+        plugin.open_settings()
+```
+
+### 5.11 `plugin_compat.py` — no change
+
+`_dict_to_li` already forwards `properties` starting with `inputstream.`
+verbatim, and `set_resolved_url` reads the same `properties` dict. The
+existing code at `plugin_compat.py:174-180` is sufficient.
+
+### 5.12 `resources/settings.xml` — no change
+
+`enable_dash` keeps its current meaning: when true, fetch DASH and
+generate MPD; when false, fall back to durl. The
+`function.inputstream_adaptive` setting does **not** exist (v0.4.0
+uses Kodi's own addon dependency resolution).
+
+### 5.13 `resources/language/.../strings.po` — minor
+
+Add localized strings for the install prompt and the "no fmp4"
+notification, in both `en_gb` and `zh_cn`.
 
 ## 6. Error handling
 
 | Failure | Detection | Behavior |
 |---|---|---|
-| `inputstream.adaptive` not installed | `xbmcaddon.Addon('inputstream.adaptive')` raises | `xbmcgui.Dialog().ok(...)` at first `set_resolved_url`, then `return` |
+| `inputstream.adaptive` not installed | menu's `System.HasAddon` returns false | `Dialog().yesno` → `InstallAddon(inputstream.adaptive)` or open settings (v0.1.0 UX) |
 | B 站 playurl API 403 / 404 | `res.get('code') != 0` | log + return (existing behavior) |
-| HTTP proxy port 54321 busy | `socket.error` on `HTTPServer(...)` | log + Kodi-level error dialog; user can change `server_port` |
+| MPD write to `special://temp` fails | `xbmcvfs.File.write` returns false | log + return (existing v0.1.0 behavior) |
 | `durl` empty | `data['durl'][0]['url']` falsy | return without `set_resolved_url` |
-| Live fmp4 unavailable | all `choose_live_resolution` candidates are `flv` | log + `Dialog().notification`; do not fall back to FLV pipe |
+| Live fmp4 unavailable (all streams are FLV) | `choose_live_resolution` returns FLV or None | `Dialog().notification` + log + return; no fallback path |
 
 ## 7. Testing
 
-The plugin has no automated test suite. Manual smoke tests in Kodi 21:
+Manual smoke tests in Kodi 21 (no automated test suite):
 
-1. **VOD AVC** — play a normal AVC video (e.g. 1080P). Expect: plays,
-   bitrate adapts on seek.
-2. **VOD HEVC** — pick a HEVC-encoded B 站 video. Expect: plays.
-3. **VOD DV** — pick a Dolby Vision title. Expect: plays, system reports
-   `Dolby Vision` in the OSD / display info.
-4. **VOD HDR10 / HLG** — expect: plays, system reports the matching HDR
-   transfer.
-5. **VOD Hi-Res FLAC** — expect: plays, audio track selectable, FLAC
-   bit-depth shown in codec info.
-6. **Live** — open a room. Expect: plays, danmaku overlay visible, no
-   rebuffer on tabbing out / back.
-7. **Seek** — drag the seek bar mid-video. Expect: <1s rebuffer, no error
-   dialog, no `/proxy/... 404` log lines.
-8. **Cold restart** — quit Kodi, reopen, play a video. Expect: no stale
-   `seg_id` files in temp dir (proxy is in-memory; the file is on disk only
-   inside service process lifetime).
+1. **VOD AVC 1080P** — play a normal AVC video. Expect: plays; MPD
+   generated under `special://temp/plugin.video.bili/{cid}.mpd`; log
+   shows `inputstream.adaptive` is the consumer.
+2. **VOD HEVC** — play a HEVC title. Expect: plays.
+3. **VOD DV** — play a Dolby Vision title. Expect: plays; system
+   reports `Dolby Vision` in the OSD.
+4. **VOD HDR10 / HLG** — expect: plays, matching HDR transfer reported.
+5. **VOD Hi-Res FLAC** — expect: plays, FLAC track selectable in OSD.
+6. **Live** — open a room. Expect: plays via
+   `inputstream.adaptive manifest_type='hls'`; danmaku overlay visible.
+7. **Seek** — drag the seek bar mid-video. Expect: <1s rebuffer; no
+   error dialog. (v0.1.0's behavior is what we are matching.)
+8. **First-run** — fresh install of plugin without
+   `inputstream.adaptive`. Open plugin → menu prompts to install. After
+   install, video plays.
+9. **No `service.py` proxy cleanup** — verify in Kodi logs that the
+   plugin no longer hosts the `/proxy/...` endpoint. MPD files under
+   `special://temp/plugin.video.bili/{cid}.mpd` are overwritten on the
+   next play; we accept accumulation as in v0.1.0. (The user can clear
+   the `enable_dash` setting or the addon cache from the settings
+   panel; the existing `remove_cache_files` route already handles this.)
 
 ## 8. Scope guard (YAGNI)
 
-Explicitly **out of scope** for this design:
+Explicitly **out of scope**:
 
-- Automatic version detection of `inputstream.adaptive` — we just declare a
-  hard minimum.
-- A `use_ffmpegdirect_fallback` setting — user already chose to drop the
-  fallback. The flag would invite drift back into the v0.2 mess.
-- HTTPS on the local proxy — 127.0.0.1 HTTP is fine; Kodi inputstream does
-  not require TLS for loopback.
-- Live HLS m3u8 wrapper generation — inputstream.adaptive can consume the
-  raw fmp4 manifest as HLS directly.
-- Dynamic B 站 CDN domain pools — the API returns the current hosts; no
-  manual host list.
+- Reintroducing `inputstream.ffmpegdirect` (live goes through adaptive
+  only).
+- Reintroducing ffmpeg pipe paths for live FLV.
+- Reintroducing HDR10 / DV / FLAC audio AdaptationSet grouping (we
+  revert to v0.1.0's simpler `audios` list).
+- Automatic version detection of `inputstream.adaptive` — the user
+  manually installs when prompted, or `addon.xml`'s `optional="true"`
+  keeps Kodi happy if they never use DASH.
+- HTTPS on the (deleted) proxy.
+- Dynamic B 站 CDN domain pools.
 
 ## 9. Risk register
 
 | Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|
-| inputstream.adaptive fmp4 live manifest handling differs across versions | medium | live broken | Pin minimum version (21.5.0) in addon.xml |
-| MPD manifest_headers string syntax differs from proxy-header format | low | seg fetch 403 | Use a single helper `build_manifest_headers()` so both call sites stay in sync |
-| `unregister_all()` racing with adaptive's in-flight Range requests | low | seek 404 | Keep seg_id file until service shutdown (already the behavior in `lookup`) |
-| `durl` direct pipe relies on Kodi 21's MP4 demuxer (no inputstream) | low | non-DASH fallback broken | Document the limitation; durl is rare for B 站 in 2026 |
+| inputstream.adaptive version too old to read v0.1.0-style MPD | low | no playback | User's Kodi 21 ships adaptive ≥ 21.5.0 (Kodi 21 system addon); optional dep declaration matches the official repo |
+| B 站 CDN requires more than Referer for non-logged-in users | medium | no playback for anonymous | Already a known issue in v0.1.0; user reports v0.1.0 was working with their login, so this matches v0.1.0 behavior |
+| Live `format=1` (fmp4) not always available for all rooms | medium | live breaks for some rooms | The `format=0,1,2` fallback is preserved; on no fmp4 the route fails loudly with a notification, instead of silently falling back to a broken path |
+| Special://temp files accumulate | low | disk usage | The temp dir already accumulates; v0.1.0 did not clean it. Not a regression. |
+
+## 10. Files to delete (summary)
+
+- `playback/m3u8.py`
+- `playback/proxy.py`
+- `monitor.py`
+
+## 11. Files to modify (summary)
+
+- `addon.xml` — drop `xbmc.service` is **kept** (still needed for the
+  tiny MPD server); `inputstream.adaptive` becomes optional
+- `playback/mpd.py` — restore v0.1.0 `generate_mpd(dash)` body
+- `routes/video.py` — restore v0.1.0 MPD write + 4-prop set_resolved_url
+- `routes/live.py` — force fmp4, single adaptive path
+- `routes/menu.py:index()` — re-add install-prompt block
+- `http_server.py` — gut: only MPD static serving remains
+- `service.py` — keep, but remove `monitor.shutdown_httpd` and the
+  BilibiliMonitor class; service now only loops on a Monitor for
+  `waitForAbort` and runs `stop_all_live_danmaku` on shutdown
+- `resources/language/.../strings.po` — install prompt text
+
+## 12. Files untouched
+
+- `addon.py`
+- `core.py`
+- `api/*`
+- `live/danmaku.py`
+- `playback/{ass,item,resolution,audio,history,live,__init__}.py`
+  — note `m3u8.py` and `proxy.py` are deleted (§10)
+- `plugin_compat.py`
+- `utils.py`
+- `danmaku2ass.py`
+- `resources/settings.xml` (no new settings)
+- `resources/language/.../strings.po` (only message strings added)
