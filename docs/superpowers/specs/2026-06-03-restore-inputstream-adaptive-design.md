@@ -41,7 +41,11 @@ restart_httpd machinery is removed.
 3. Live playback goes through `inputstream.adaptive` with
    `manifest_type='hls'`, `manifest_update_params='full'`, and the same
    Referer-only header pair. We force `format=1` (fmp4) at the playurl
-   API — FLV is no longer consumed.
+   API — FLV is no longer consumed. When the API returns
+   `master_url` (http_hls protocol m3u8) we use that as `path`
+   preferentially; only fall back to a raw `urls[0]` m4s URL when
+   `master_url` is empty. See §4.2 / §5.9 for the failure modes this
+   is meant to address.
 4. The local HTTP proxy and its proxy registry are **deleted**. The
    `xbmc.service` extension stays (it now hosts a tiny static-file
    MPD server, see §5.5/§5.6); the proxy half of that server is gone.
@@ -104,8 +108,12 @@ addon.py (one-shot)
      ├─ getRoomPlayInfo → playurl_info
      │   (format filter forces fmp4: format=1; multi-QN fallback)
      ├─ playback.live.choose_live_resolution()  → best fmp4 stream
+     │     the chosen dict has BOTH:
+     │       urls[0]      → "host + base_url + extra" (a single m4s URL)
+     │       master_url   → http_hls protocol's m3u8 (only some rooms)
+     ├─ pick the input: master_url if present, else urls[0]
      └─ plugin.set_resolved_url({
-            path:   <fmp4 cdn url>,
+            path:   <chosen url>,
             properties: {
                 'inputstream': 'inputstream.adaptive',
                 'inputstream.adaptive.manifest_type': 'hls',
@@ -120,10 +128,33 @@ addon.py (one-shot)
         }, subtitles=live_ass)
 ```
 
-FLV is **not** consumed. If the playurl API returns only FLV entries
-after the multi-QN fallback, the route re-fetches with
-`format=0,1,2` (all formats); if even that has no fmp4, log + abort
-with a Kodi notification.
+The first iteration: `format=1` (fmp4 only) at multi-QN levels. On no
+fmp4 found, re-fetch with `format=0,1,2` (all formats) and the
+multi-QN ladder again. If even that yields no fmp4, log + abort with a
+Kodi notification.
+
+**Why this is hard** (mitigations in §5.9 / §9):
+
+- B 站 returns **single m4s URLs** (not m3u8 playlists) when
+  `protocol=0,1` is requested. inputstream.adaptive's
+  `manifest_type='hls'` is a *strong* declaration: it expects an m3u8.
+  When fed a raw m4s URL, adaptive historically has trouble —
+  this is the failure mode the user wants v0.4.0 to fix.
+- When `protocol` includes `http_hls`, B 站 returns a real m3u8 in
+  `master_url`; this works with adaptive. We prefer it.
+- `manifest_update_params='full'` re-fetches the manifest periodically.
+  Raw m4s URLs have query-string signatures that expire; the refresh
+  must produce a new signed URL each cycle. This is the B 站-specific
+  reason live with adaptive is harder than the same call against a
+  normal CDN.
+- `stream_headers='Referer=…'` is enough for the VOD CDN. For live
+  m4s URLs, B 站's CDN generally accepts Referer but may 403 on the
+  *first* Range request (segment URL with no Range). adaptive retries
+  with Range automatically; if it doesn't, we add a probe.
+
+FLV is **not** consumed in v0.4.0. v0.1.0 used `inputstream.ffmpegdirect`
+for fmp4 and ffmpeg pipe for FLV; v0.4.0 consolidates on
+inputstream.adaptive only.
 
 ### 4.3 `durl` legacy path
 
@@ -167,78 +198,73 @@ v0.4.0
   inputstream.adaptive is now optional; menu guides the install.
 ```
 
-### 5.2 `playback/mpd.py` — restore v0.1.0 structure
+### 5.2 `playback/mpd.py` — restore v0.1.0 structure (with v0.3.0 audio)
 
-This is the v0.1.0 implementation, recovered verbatim from
-`E:\Project\plugin.video.bili-origin\video_utils.py:253-307`. It is the
-exact code that was verified to play; the v0.3.0 rewrite that dropped
-`<SegmentBase>` is reverted. The function signature is restored to
-`generate_mpd(dash)` (one argument) — the v0.3.0 cookie/ua/port params
-go away because BaseURL no longer points at a proxy.
+The VOD `generate_mpd(dash)` body is rebuilt by:
+
+1. **Video AdaptationSet** (v0.1.0 exact): per Representation, output
+   `<SegmentBase indexRange="…">` with `<Initialization range="…"/>`
+   and a single `<BaseURL>…</BaseURL>`. This is what inputstream.adaptive
+   uses to splice init/media byte ranges precisely against B 站 CDN.
+2. **Audio AdaptationSets** (v0.3.0, NOT v0.1.0): one AS per
+   `AudioTrack`, with `lang="zh-Hans"`, `codecs` from
+   `track.codec_mpd`, `<AudioChannelConfiguration>`, and either
+   `<Role value="main"/>` (primary AAC) or
+   `<SupplementalProperty value="JOC"/>` (Dolby). Per-Representation
+   `<SegmentBase>` is kept.
+
+The signature stays `generate_mpd(dash)` (one argument, matching
+v0.1.0). The v0.3.0 `cookie/ua/port/use_proxy` parameters are removed —
+BaseURL is the B 站 CDN URL directly, so no auth-header context needs
+to be threaded through.
+
+Pseudocode shape:
 
 ```python
 def generate_mpd(dash):
     videos = choose_resolution(dash['video'])
-    audios = sorted(dash['audio'], key=lambda x: x.get('id', 0), reverse=True)
+    audio_tracks = select_by_user_pref(collect_audio_tracks(dash))
 
-    mpd_lines = [
-        '<?xml version="1.0" encoding="UTF-8"?>\n',
-        '<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" '
-        'profiles="urn:mpeg:dash:profile:isoff-on-demand:2011" '
-        'type="static" mediaPresentationDuration="PT',
-        str(dash['duration']),
-        'S" minBufferTime="PT', str(dash['minBufferTime']), 'S">\n',
-        '\t<Period>\n',
-    ]
+    # … MPD/Period envelope …
 
-    def _build_adaptation_set(items, mime_type, extra_attrs=''):
-        lines = ['\t\t<AdaptationSet mimeType="%s" startWithSAP="1" '
-                 'segmentAlignment="true"%s>\n' % (mime_type, extra_attrs)]
-        for item in items:
-            base_url = item['baseUrl'].replace('&', '&amp;')
-            attrs = []
-            for k in ('bandwidth', 'codecs', 'frameRate', 'height',
-                      'width', 'id', 'audioSamplingRate'):
-                if k in item:
-                    attrs.append('%s="%s"' % (k, item[k]))
-            lines.append('\t\t\t<Representation %s>\n' % ' '.join(attrs))
-            lines.append('\t\t\t\t<BaseURL>%s</BaseURL>\n' % base_url)
-            for bu in item.get('backup_url', []) or []:
-                lines.append('\t\t\t\t<BaseURL>%s</BaseURL>\n' %
-                             bu.replace('&', '&amp;'))
-            lines.append('\t\t\t\t<SegmentBase indexRange="%s">\n'
-                         % item['SegmentBase']['indexRange'])
-            lines.append('\t\t\t\t\t<Initialization range="%s">'
-                         '</Initialization>\n'
-                         % item['SegmentBase']['Initialization'])
-            lines.append('\t\t\t\t</SegmentBase>\n')
-            lines.append('\t\t\t</Representation>\n')
-        lines.append('\t\t</AdaptationSet>\n')
-        return lines
+    # Video: v0.1.0 single-AS shape, per-Representation SegmentBase
+    lines.append('\t\t<AdaptationSet mimeType="video/mp4" '
+                 'startWithSAP="1" segmentAlignment="true" '
+                 'scanType="progressive">\n')
+    for v in videos:
+        attrs = ['id="%s"' % v['id'], 'codecs="%s"' % v.get('codecs', ''),
+                 'bandwidth="%d"' % v.get('bandwidth', 0)]
+        if 'width' in v:    attrs.append('width="%d"' % v['width'])
+        if 'height' in v:   attrs.append('height="%d"' % v['height'])
+        if 'frameRate' in v: attrs.append('frameRate="%s"' % v['frameRate'])
+        lines.append('\t\t\t<Representation %s>\n' % ' '.join(attrs))
+        lines.append('\t\t\t\t<BaseURL>%s</BaseURL>\n' %
+                     v['baseUrl'].replace('&', '&amp;'))
+        for bu in v.get('backup_url', []) or []:
+            lines.append('\t\t\t\t<BaseURL>%s</BaseURL>\n' %
+                         bu.replace('&', '&amp;'))
+        sb = v['SegmentBase']
+        lines.append('\t\t\t\t<SegmentBase indexRange="%s">\n' % sb['indexRange'])
+        lines.append('\t\t\t\t\t<Initialization range="%s">'
+                     '</Initialization>\n' % sb['Initialization'])
+        lines.append('\t\t\t\t</SegmentBase>\n')
+        lines.append('\t\t\t</Representation>\n')
+    lines.append('\t\t</AdaptationSet>\n')
 
-    mpd_lines.extend(_build_adaptation_set(
-        videos, 'video/mp4', ' scanType="progressive"'))
-    mpd_lines.extend(_build_adaptation_set(
-        audios, 'audio/mp4', ' lang="und"'))
-    mpd_lines.append('\t</Period>\n</MPD>\n')
-    return ''.join(mpd_lines)
+    # Audio: v0.3.0 multi-AS shape (one per AudioTrack)
+    for t in audio_tracks:
+        lines.extend(_build_audio_as(t))
+
+    lines.append('\t</Period>\n</MPD>\n')
+    return ''.join(lines)
 ```
 
-**Note on v0.3.0 enhancements that we are dropping on purpose**:
-- HDR10 / DV / HLG `<EssentialProperty>` and `<SupplementalProperty>`
-  blocks (`_video_color_props`) — v0.1.0 did not have these and the user
-  reports v0.1.0 plays DV / HDR correctly. The CICP signaling in
-  inputstream.adaptive comes from the Representation `codecs` and
-  container metadata, not from MPD `<EssentialProperty>`. We can
-  re-introduce them in a follow-up spec if needed.
-- Multi-adaptation-set audio grouping (AAC / Dolby / FLAC) — v0.1.0 had
-  one combined `audios` list, sorted by id. v0.3.0 separated them; we
-  revert to the simpler v0.1.0 grouping.
+`_build_audio_as(track)` is the v0.3.0 helper — its body is unchanged.
+`collect_audio_tracks`, `select_by_user_pref`, `AudioTrack`, and
+`_infer_kind` (codecs-based dispatch) are all reused from
+`playback/audio.py`.
 
-`routes/video.py` is the **only** caller of `generate_mpd()`. The
-helper that built the manifest_headers string is no longer needed (the
-string is constant `'Referer=https://www.bilibili.com'` and lives in
-`routes/video.py`).
+`routes/video.py` is the only caller of `generate_mpd()`.
 
 ### 5.3 `playback/m3u8.py` — delete
 
@@ -302,10 +328,14 @@ The BilibiliMonitor class exists only to host the proxy (`shutdown_httpd`,
 The VOD path becomes a near-clone of v0.1.0 `routes.py:video()`:
 - Use `generate_mpd(dash)` (one-arg, restored signature).
 - Write MPD to `special://temp/plugin.video.bili/{cid}.mpd`.
-- `path` is the **local MPD file path**:
-  `xbmcvfs.translatePath('special://temp/plugin.video.bili/{cid}.mpd')`.
-  inputstream.adaptive opens it directly via Kodi's VFS — no HTTP hop,
-  no `127.0.0.1` URL.
+- `path` is the **HTTP URL served by the static MPD server**:
+  `f'http://127.0.0.1:{port}/{cid}.mpd'` (port = `getSetting('server_port')`,
+  default 54321). The static server (§5.5) serves it. v0.1.0 used
+  the same URL shape; v0.4.0 keeps it because inputstream.adaptive in
+  Kodi 21 reads the manifest URL via Kodi's HTTP client, which is the
+  proven path. The `xbmcvfs.translatePath(...)` local-file path is
+  rejected here — adaptive cannot be assumed to read `special://`
+  paths reliably in all Kodi 21 builds.
 - `properties` carries the four `inputstream.*` keys from §4.1.
 - `audio_only` branch unchanged: `path = audio_url|Referer=…`.
 - `durl` branch unchanged: `path = durl_url|Referer=…`.
@@ -313,10 +343,23 @@ The VOD path becomes a near-clone of v0.1.0 `routes.py:video()`:
 ### 5.9 `routes/live.py`
 
 - Remove `_ensure_hls_ext`.
-- Force `format=1` (fmp4) in the initial `_fetch`; on failure fall back
-  to `format=0,1,2`; on no fmp4 found, log + notify + return.
+- The playurl request: initial loop tries `format=1` (fmp4 only) at
+  QN levels `(live_resolution, 400, 250, 150, 80)`. On no result,
+  re-fetch with `format=0,1,2` at the same QN ladder. This recovers
+  rooms that only return FLV at the user's preferred QN but fmp4 at a
+  lower QN.
+- After `choose_live_resolution(streams)` returns a `best` dict:
+  1. If `best['master_url']` is non-empty, **use master_url** as
+     `path`. master_url is the m3u8 that the http_hls protocol returns,
+     and it is the easiest input for inputstream.adaptive.
+  2. Otherwise use `best['urls'][0]` (a raw m4s URL).
 - Single output: inputstream.adaptive `manifest_type='hls'` with
   `manifest_update_params='full'` and the two Referer headers.
+- If `best` is still FLV-only (no fmp4), log + `Dialog().notification`
+  + return. **No FLV pipe fallback** (v0.4.0 commits to adaptive only).
+- `playback.live.choose_live_resolution` does **not** change: it still
+  returns the same dict shape with `urls`, `master_url`, `format_name`,
+  `codec_name`, `current_qn`. We just consume `master_url` first.
 
 ### 5.10 `routes/menu.py:index()` — add the install-prompt
 
@@ -373,7 +416,13 @@ Manual smoke tests in Kodi 21 (no automated test suite):
 4. **VOD HDR10 / HLG** — expect: plays, matching HDR transfer reported.
 5. **VOD Hi-Res FLAC** — expect: plays, FLAC track selectable in OSD.
 6. **Live** — open a room. Expect: plays via
-   `inputstream.adaptive manifest_type='hls'`; danmaku overlay visible.
+   `inputstream.adaptive manifest_type='hls'`. Test both:
+   - A room whose `master_url` is populated (http_hls room): adaptive
+     reads the m3u8; logs should show the m3u8 URL as `path`.
+   - A room whose `master_url` is empty (only `urls[0]` returned):
+     adaptive reads a single m4s URL; expect the player to Range-fetch
+     the file. This is the v0.4.0's risky path — confirm or fail.
+   - Danmaku overlay (`live/danmaku.py`) should still appear.
 7. **Seek** — drag the seek bar mid-video. Expect: <1s rebuffer; no
    error dialog. (v0.1.0's behavior is what we are matching.)
 8. **First-run** — fresh install of plugin without
@@ -407,8 +456,11 @@ Explicitly **out of scope**:
 |---|---|---|---|
 | inputstream.adaptive version too old to read v0.1.0-style MPD | low | no playback | User's Kodi 21 ships adaptive ≥ 21.5.0 (Kodi 21 system addon); optional dep declaration matches the official repo |
 | B 站 CDN requires more than Referer for non-logged-in users | medium | no playback for anonymous | Already a known issue in v0.1.0; user reports v0.1.0 was working with their login, so this matches v0.1.0 behavior |
-| Live `format=1` (fmp4) not always available for all rooms | medium | live breaks for some rooms | The `format=0,1,2` fallback is preserved; on no fmp4 the route fails loudly with a notification, instead of silently falling back to a broken path |
-| Special://temp files accumulate | low | disk usage | The temp dir already accumulates; v0.1.0 did not clean it. Not a regression. |
+| Live `format=1` (fmp4) not always available for all rooms | medium | live breaks for some rooms | `format=0,1,2` fallback preserves availability at lower QN; `master_url` (m3u8) is preferred when present |
+| Live raw m4s URL (no m3u8 wrapper) confuses `manifest_type='hls'` | medium-high | live never starts | `master_url` from http_hls is the safe path; for raw m4s rooms we feed the URL directly to adaptive and expect it to Range-fetch the file as a single segment. Log the format chosen so we can diagnose in Kodi logs |
+| Live m4s URL signature expires during playback | high (B 站 m4s URLs are short-lived) | live dies after a few minutes | `manifest_update_params='full'` re-fetches the manifest on Kodi's refresh cadence; if the re-fetched URL 403s, we let adaptive give up and the user re-enters the room. Long-term fix would be a re-auth hook, out of scope for v0.4.0 |
+| Live muxed A/V (B 站 fmp4 has audio inside the same m4s) confuses adaptive | medium | no audio | B 站 fmp4 is a single muxed track; adaptive's HLS demuxer should not need an explicit AS for it. If it does, follow-up spec adds an audio AdaptationSet |
+| Special://temp files accumulate | low | disk usage | The temp dir already accumulates; v0.1.0 did not clean it. Not a regression |
 
 ## 10. Files to delete (summary)
 
