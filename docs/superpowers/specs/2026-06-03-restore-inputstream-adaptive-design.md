@@ -107,54 +107,36 @@ addon.py (one-shot)
   └─ routes/live.py:live(id)
      ├─ getRoomPlayInfo → playurl_info
      │   (format filter forces fmp4: format=1; multi-QN fallback)
-     ├─ playback.live.choose_live_resolution()  → best fmp4 stream
-     │     the chosen dict has BOTH:
-     │       urls[0]      → "host + base_url + extra" (a single m4s URL)
-     │       master_url   → http_hls protocol's m3u8 (only some rooms)
-     ├─ pick the input: master_url if present, else urls[0]
-     └─ plugin.set_resolved_url({
-            path:   <chosen url>,
-            properties: {
-                'inputstream': 'inputstream.adaptive',
-                'inputstream.adaptive.manifest_type': 'hls',
-                'inputstream.adaptive.manifest_update_params': 'full',
-                'inputstream.adaptive.manifest_headers':
-                    'Referer=https://www.bilibili.com',
-                'inputstream.adaptive.stream_headers':
-                    'Referer=https://www.bilibili.com',
-            },
-            is_playable: True,
-            is_live:    True,
-        }, subtitles=live_ass)
+     ├─ playback.live.choose_live_resolution()  → best (含 master_url / urls[0])
+     └─ 路由分发（v0.4.0 final）:
+         master_url 非空 (http_hls 真 m3u8):
+           → inputstream.adaptive + manifest_type='hls'
+             + manifest_update_params='full'
+             + manifest_headers/stream_headers=Referer
+         master_url 空, 只有 urls[0] (http_stream 裸 m4s):
+           → Kodi ffmpeg pipe 风格:
+             url|User-Agent=...&Referer=...&Origin=...
+             &reconnect=1&reconnect_streamed=1&reconnect_delay_max=5
+             (Kodi ffmpeg 原生 reconnect, 不需要 inputstream.*)
 ```
 
-The first iteration: `format=1` (fmp4 only) at multi-QN levels. On no
-fmp4 found, re-fetch with `format=0,1,2` (all formats) and the
-multi-QN ladder again. If even that yields no fmp4, log + abort with a
-Kodi notification.
+**为什么两种 URL 形态不能合并到同一条路径**：
 
-**Why this is hard** (mitigations in §5.9 / §9):
+| 路径 | m3u8 (master_url) | 裸 m4s (urls[0]) |
+|---|---|---|
+| inputstream.adaptive + manifest_type=hls | ✓ 完美（HLS 原生场景, adaptive 周期 refresh playlist 拉新 segment） | ✗ 扭曲（adaptive 把单 m4s 当 HLS manifest, 每次 refresh 重算 segment index, OSD 时长跳） |
+| Kodi ffmpeg pipe (`url\|reconnect=1&...`) | ✗ **只播 5-10s**（ffmpeg pipe 模式**不**走 HLS demuxer 路径, **不**周期 refresh m3u8 playlist; m3u8 过期后即断流） | ✓ 完美（m4s 是 ffmpeg 原生输入; reconnect 处理断流重连） |
 
-- B 站 returns **single m4s URLs** (not m3u8 playlists) when
-  `protocol=0,1` is requested. inputstream.adaptive's
-  `manifest_type='hls'` is a *strong* declaration: it expects an m3u8.
-  When fed a raw m4s URL, adaptive historically has trouble —
-  this is the failure mode the user wants v0.4.0 to fix.
-- When `protocol` includes `http_hls`, B 站 returns a real m3u8 in
-  `master_url`; this works with adaptive. We prefer it.
-- `manifest_update_params='full'` re-fetches the manifest periodically.
-  Raw m4s URLs have query-string signatures that expire; the refresh
-  must produce a new signed URL each cycle. This is the B 站-specific
-  reason live with adaptive is harder than the same call against a
-  normal CDN.
-- `stream_headers='Referer=…'` is enough for the VOD CDN. For live
-  m4s URLs, B 站's CDN generally accepts Referer but may 403 on the
-  *first* Range request (segment URL with no Range). adaptive retries
-  with Range automatically; if it doesn't, we add a probe.
+**ffmpeg 处理 m3u8 需要 `-f hls` 显式走 HLS demuxer**——但 Kodi ffmpeg pipe 模式不显式指定 demuxer, 走 URL 探测, 拿到 `.m3u8` 后端**会**经 HLS demuxer (内置周期 refresh) — 但**仅在 demuxer 被显式启动时**。Kodi 实际行为是把 URL 当 generic HTTP 输入 + 内置 reconnect 参数, 不经 HLS demuxer 周期 refresh 路径, 所以 m3u8 5-10s 后就过期断流.
+
+**因此 v0.4.0 必须按 URL 形态分流**:
+- 真 m3u8 → inputstream.adaptive (唯一能持续拉)
+- 裸 m4s → ffmpeg pipe (原生场景, OSD 时长稳定)
 
 FLV is **not** consumed in v0.4.0. v0.1.0 used `inputstream.ffmpegdirect`
-for fmp4 and ffmpeg pipe for FLV; v0.4.0 consolidates on
-inputstream.adaptive only.
+for fmp4 and ffmpeg pipe for FLV; v0.4.0's split is: master_url
+gets adaptive, urls[0] gets ffmpeg pipe. inputstream.ffmpegdirect is
+gone.
 
 ### 4.3 `durl` legacy path
 
