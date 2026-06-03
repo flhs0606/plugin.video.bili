@@ -28,8 +28,8 @@ _MPD_SERVER_LOCK = threading.Lock()
 def _start_mpd_server_daemon():
     """在当前进程里启一个 daemon 线程跑静态 MPD HTTP server。
 
-    端口 54321。返回 True 表示已 bind, False 表示失败 (可能 OS
-    端口仍被上一进程占用)。整个 plugin run 期间反复调用是 idempotent。
+    端口 54321。返回 True 表示已 bind, False 表示失败。
+    整个 plugin run 期间反复调用是 idempotent。
     """
     global _MPD_SERVER_STARTED
     with _MPD_SERVER_LOCK:
@@ -41,10 +41,14 @@ def _start_mpd_server_daemon():
             port = int(getSetting('server_port') or 54321)
             httpd = get_http_server(port=port)
             if not httpd:
+                # 端口已被占用 — 通常意味着 service.py 进程或
+                # 前一个 CPythonInvoker 进程仍占着。MPD server
+                # 反正已在那台机器上 listen, 当前导航仍能拉 MPD,
+                # 不必本地起。降为 debug 而不是 warning。
                 xbmc.log(
-                    '[plugin.video.bili] addon: MPD server bind FAILED on :%s '
-                    '(port may still be held by previous process)'
-                    % port, xbmc.LOGWARNING,
+                    '[plugin.video.bili] addon: MPD server :%s already '
+                    'in use — using existing listener' % port,
+                    xbmc.LOGDEBUG,
                 )
                 return False
 

@@ -107,11 +107,20 @@ def get_http_server(address=None, port=None):
     `port` defaults to 54321 (the historical default and Kodi addon
     setting default). The address defaults to 0.0.0.0. Returns None if
     the bind fails (port already in use).
+
+    SO_REUSEADDR is enabled on the server class so that the OS lets
+    us rebind a port that is still in TIME_WAIT from a recently
+    dead CPythonInvoker process. Without this, every navigation
+    after the first one logs 'bind FAILED' until the OS reclaims
+    the port.
     """
     if not re.match(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$', address or ''):
         address = '0.0.0.0'
     port = int(port) if port else 54321
     try:
+        # Set the class attribute before instantiating so the
+        # socketserver base picks it up during bind().
+        BaseHTTPServer.HTTPServer.allow_reuse_address = True
         server = BaseHTTPServer.HTTPServer(
             (address, port), BilibiliRequestHandler,
         )
