@@ -327,6 +327,14 @@ def live(id):
             'https://api.live.bilibili.com/xlive/web-room/v2/index/getRoomPlayInfo?' + params
         )
         if r['code'] != 0 or not r.get('data', {}).get('playurl_info'):
+            xbmc.log(
+                '[live] _fetch room=%s qn=%s fmt=%s -> empty (code=%s, '
+                'playurl_info=%s)' % (
+                    room_id, stream_qn, fmt_filter, r.get('code'),
+                    r.get('data', {}).get('playurl_info'),
+                ),
+                xbmc.LOGDEBUG,
+            )
             return None
         return r['data']['playurl_info']['playurl']['stream']
 
@@ -341,6 +349,22 @@ def live(id):
         for try_qn in (qn, 400, 250, 150, 80):
             streams = _fetch(id, try_qn, '0,1,2')
             if streams:
+                break
+    # ── 仍无 → 最终 fallback: protocol=0 (仅 http_stream) + 全 format ──
+    if not streams:
+        xbmc.log(
+            '[live] %s all QN/format combos exhausted; trying '
+            'protocol=0 fallback' % id, xbmc.LOGINFO,
+        )
+        for try_qn in (qn, 400, 250, 150, 80):
+            r = fetch_url(
+                'https://api.live.bilibili.com/xlive/web-room/v2/index/'
+                'getRoomPlayInfo?room_id=%s&no_playurl=0&mask=1&qn=%s'
+                '&platform=web&protocol=0&format=0,1,2&codec=0,1,2'
+                '&dolby=5&ptype=8&panorama=1' % (id, try_qn)
+            )
+            if r.get('code') == 0 and r.get('data', {}).get('playurl_info'):
+                streams = r['data']['playurl_info']['playurl']['stream']
                 break
     if not streams:
         xbmc.log('[live] no playurl for room_id=%s' % id, xbmc.LOGERROR)
