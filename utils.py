@@ -49,7 +49,20 @@ def localize(id):
 
 
 def getSetting(name):
-    return xbmcplugin.getSetting(int(sys.argv[1]), name)
+    """Read an addon setting.
+
+    In `addon.py` (CPythonInvoker) sys.argv[1] is the plugin handle
+    that xbmcplugin.getSetting() requires. In `service.py` (long-lived
+    xbmc.service) there is no plugin handle — sys.argv is just
+    ['service.py'] — and the int() call would IndexError. Fall back
+    to xbmcaddon.Addon().getSetting() which works in both contexts.
+    """
+    try:
+        handle = int(sys.argv[1])
+        return xbmcplugin.getSetting(handle, name)
+    except (IndexError, ValueError):
+        # service.py or any non-plugin context
+        return xbmcaddon.Addon().getSetting(name)
 
 
 def clear_text(text):
