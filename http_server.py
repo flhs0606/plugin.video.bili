@@ -66,7 +66,10 @@ class BilibiliRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
         try:
             with open(file_path, 'rb') as f:
                 self.send_response(200)
-                self.send_header('Content-Type', 'application/xml+dash')
+                # inputstream.adaptive needs the standard DASH MIME type
+                # to auto-detect the manifest format. application/xml+dash
+                # is non-standard and adaptive rejects it.
+                self.send_header('Content-Type', 'application/dash+xml')
                 self.send_header('Content-Length', os.path.getsize(file_path))
                 self.end_headers()
                 while True:
@@ -89,7 +92,7 @@ class BilibiliRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
             self.send_error(404, 'File Not Found')
             return
         self.send_response(200)
-        self.send_header('Content-Type', 'application/xml+dash')
+        self.send_header('Content-Type', 'application/dash+xml')
         self.send_header('Content-Length', os.path.getsize(file_path))
         self.end_headers()
 
