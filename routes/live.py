@@ -410,14 +410,18 @@ def live(id):
     ffmpeg_hdr = 'Referer=https://www.bilibili.com&User-Agent=%s&Origin=https://www.bilibili.com' % ua
 
     if is_m3u8:
-        live_props = {
-            'inputstream': 'inputstream.adaptive',
-            'inputstream.adaptive.manifest_type': 'hls',
-            'inputstream.adaptive.manifest_update_params': 'full',
-            'inputstream.adaptive.manifest_headers': _BILI_REFERER,
-            'inputstream.adaptive.stream_headers': _BILI_REFERER,
+        item = {
+            'path': chosen,
+            'is_playable': True,
+            'is_live': True,
+            'properties': {
+                'inputstream': 'inputstream.adaptive',
+                'inputstream.adaptive.manifest_type': 'hls',
+                'inputstream.adaptive.manifest_update_params': 'full',
+                'inputstream.adaptive.manifest_headers': _BILI_REFERER,
+                'inputstream.adaptive.stream_headers': _BILI_REFERER,
+            },
         }
-        live_url = chosen
     else:
         # raw m4s → ffmpeg pipe. ffmpeg options are pipe-style:
         #   url|header=value&reconnect=1&reconnect_streamed=1&reconnect_delay_max=5
@@ -429,12 +433,10 @@ def live(id):
         live_url = '%s|%s&reconnect=1&reconnect_streamed=1&reconnect_delay_max=5' % (
             chosen, ffmpeg_hdr,
         )
+        item = {
+            'path': live_url,
+            'is_playable': True,
+            'is_live': True,
+        }
 
-    item = {
-        'path': live_url,
-        'is_playable': True,
-        'is_live': True,
-    }
-    if live_props:
-        item['properties'] = live_props
     plugin.set_resolved_url(item, subtitles=live_ass)
