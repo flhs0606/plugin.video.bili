@@ -317,16 +317,29 @@ def live(id):
     """
     qn = getSetting('live_resolution')
 
+    def _fetch(room_id, stream_qn, fmt_filter):
+        params = (
+            'room_id={}&no_playurl=0&mask=1&qn={}&platform=web'
+            '&protocol=0,1&format={}&codec=0,1,2'
+            '&dolby=5&ptype=8&panorama=1'
+        ).format(room_id, stream_qn, fmt_filter)
+        r = fetch_url(
+            'https://api.live.bilibili.com/xlive/web-room/v2/index/getRoomPlayInfo?' + params
+        )
+        if r['code'] != 0 or not r.get('data', {}).get('playurl_info'):
+            return None
+        return r['data']['playurl_info']['playurl']['stream']
+
     # ── 强制 fmp4 (format=1) 多 QN 降级 ──
     streams = None
     for try_qn in (qn, 400, 250, 150, 80):
-        streams = _fetch(try_qn, '1')
+        streams = _fetch(id, try_qn, '1')
         if streams:
             break
     # ── 无 fmp4 → 回退所有 format (0,1,2) ──
     if not streams:
         for try_qn in (qn, 400, 250, 150, 80):
-            streams = _fetch(try_qn, '0,1,2')
+            streams = _fetch(id, try_qn, '0,1,2')
             if streams:
                 break
     if not streams:
@@ -391,17 +404,3 @@ def live(id):
             'inputstream.adaptive.stream_headers': _BILI_REFERER,
         },
     }, subtitles=live_ass)
-
-
-def _fetch(stream_qn, fmt_filter):
-    params = (
-        'room_id={}&no_playurl=0&mask=1&qn={}&platform=web'
-        '&protocol=0,1&format={}&codec=0,1,2'
-        '&dolby=5&ptype=8&panorama=1'
-    ).format(id, stream_qn, fmt_filter)
-    r = fetch_url(
-        'https://api.live.bilibili.com/xlive/web-room/v2/index/getRoomPlayInfo?' + params
-    )
-    if r['code'] != 0 or not r.get('data', {}).get('playurl_info'):
-        return None
-    return r['data']['playurl_info']['playurl']['stream']
