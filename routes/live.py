@@ -422,14 +422,19 @@ def live(id):
         # raw m4s → ffmpeg pipe. ffmpeg options are pipe-style:
         #   url|header=value&reconnect=1&reconnect_streamed=1&reconnect_delay_max=5
         # `reconnect` is ffmpeg's own HTTP reconnect, not Kodi's.
-        live_props = None
+        # We omit the 'properties' key entirely so plugin_compat's
+        # item.get('properties', {}) short-circuits to {} and skips
+        # the inputstream branch — Kodi ffmpeg demuxer is used
+        # directly with no inputstream.* hint.
         live_url = '%s|%s&reconnect=1&reconnect_streamed=1&reconnect_delay_max=5' % (
             chosen, ffmpeg_hdr,
         )
 
-    plugin.set_resolved_url({
+    item = {
         'path': live_url,
         'is_playable': True,
         'is_live': True,
-        'properties': live_props,
-    }, subtitles=live_ass)
+    }
+    if live_props:
+        item['properties'] = live_props
+    plugin.set_resolved_url(item, subtitles=live_ass)
