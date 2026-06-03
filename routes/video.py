@@ -192,7 +192,6 @@ def video(id, cid, ispgc, audio_only, title):
             url = wiliwili_url
 
     data = res['result'] if ispgc else res['data']
-    port = getSetting('server_port') or '54321'
 
     # 1) audio_only: 单音轨 pipe 直连（不走 adaptive）
     if 'dash' in data and audio_only:
@@ -232,10 +231,14 @@ def video(id, cid, ispgc, audio_only, title):
             xbmc.log('[video] MPD write error: %s' % e, xbmc.LOGERROR)
             return
 
-        mpd_url = 'http://127.0.0.1:%s/%s.mpd' % (port, cid)
-        xbmc.log('[video] MPD written: %s → %s' % (mpd_path, mpd_url), xbmc.LOGINFO)
+        # 用 file:// 直读 MPD，绕过 HTTP server (xbmc.service 进程
+        # 在某些部署上启动不可靠；daemon thread 也会随 addon.py
+        # 进程结束)。inputstream.adaptive 在 Kodi 21 接受 file://
+        # 绝对路径作为 manifest URL，协议自动从 .mpd 后缀识别。
+        mpd_file_url = 'file://' + mpd_path
+        xbmc.log('[video] MPD written: %s → %s' % (mpd_path, mpd_file_url), xbmc.LOGINFO)
         video_url = {
-            'path': mpd_url,
+            'path': mpd_file_url,
             'is_playable': True,
             'properties': {
                 'inputstream': 'inputstream.adaptive',
