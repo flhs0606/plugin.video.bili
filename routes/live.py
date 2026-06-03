@@ -1,6 +1,5 @@
 # -*- coding:utf-8 -*-
 """直播：分区、关注、播放。"""
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import urlencode
 
 from core import plugin, xbmc, xbmcgui
@@ -314,12 +313,22 @@ def followingLive(page):
 def live(id):
     """Fetch a live stream and hand it to Kodi ffmpeg demuxer.
 
-    Performance: launch the multi-QN ladder concurrently and stop at
-    the first success. Worst case was previously ~10 s (5 QN × 2
-    format filters, sequential). With ThreadPoolExecutor the wall
-    time is bounded by the slowest single request (~2 s on a slow
-    network) plus the dance between format=1 and the protocol=0
-    fallback.
+    Performance vs API rate-limit tradeoff:
+      The naive ladder is 5 QN levels × 2 format filters × 1
+      protocol, sequential. On a slow network this hits ~10 s
+      (the user observed exactly that). Concurrency would shave
+      it to ~1 s BUT would issue 5 simultaneous
+      getRoomPlayInfo calls per click, which B 站 rate-limits
+      aggressively (412 / -101 are common after bursts).
+
+      Compromise: 2 sequential attempts only.
+        1) qn=user_setting (usually 蓝光). One HTTP call. 99%
+           success path. ~500 ms.
+        2) qn=80 (标清). One HTTP call, only if (1) failed.
+           Fallback for rate-limited or low-spec servers. ~500 ms.
+
+      Worst case 1 s, best case 500 ms. No concurrent calls
+      to avoid B 站 风控.
     """
     qn = getSetting('live_resolution')
 
@@ -333,45 +342,28 @@ def live(id):
             'https://api.live.bilibili.com/xlive/web-room/v2/index/getRoomPlayInfo?' + params
         )
         if r['code'] != 0 or not r.get('data', {}).get('playurl_info'):
-            return (room_id, stream_qn, fmt_filter, protocol, None)
-        return (room_id, stream_qn, fmt_filter, protocol,
-                r['data']['playurl_info']['playurl']['stream'])
+            xbmc.log(
+                '[live] _fetch room=%s qn=%s fmt=%s proto=%s -> empty '
+                '(code=%s)' % (
+                    room_id, stream_qn, fmt_filter, protocol, r.get('code'),
+                ),
+                xbmc.LOGDEBUG,
+            )
+            return None
+        return r['data']['playurl_info']['playurl']['stream']
 
-    def _try_concurrent(attempts):
-        """Run a list of (qn, fmt, protocol) attempts in parallel.
-        Return the first non-None result. Bounded by the slowest
-        single request, not by their sum.
-        """
-        with ThreadPoolExecutor(max_workers=len(attempts)) as ex:
-            futures = {ex.submit(_fetch, id, q, f, p): (q, f, p)
-                       for (q, f, p) in attempts}
-            for fut in as_completed(futures):
-                _, _, _, _, streams = fut.result()
-                if streams:
-                    return streams
-        return None
-
-    # ── Phase 1: 并发试 format=1 (fmp4) 多 QN (用 setting 的 qn) ──
-    streams = _try_concurrent(
-        [(qn, '1', '0,1')] +
-        [(alt_qn, '1', '0,1') for alt_qn in (400, 250, 150, 80)]
-    )
-    # ── Phase 2: format=0,1,2 多 QN (并发) ──
+    # ── Step 1: user's setting QN + format=1 (fmp4 preferred) ──
+    streams = _fetch(id, qn, '1')
+    # ── Step 2: fallback to qn=80 (标清) format=0,1,2 ──
     if not streams:
-        streams = _try_concurrent(
-            [(qn, '0,1,2', '0,1')] +
-            [(alt_qn, '0,1,2', '0,1') for alt_qn in (400, 250, 150, 80)]
-        )
-    # ── Phase 3: protocol=0 fallback (rare; serial is fine) ──
+        streams = _fetch(id, 80, '0,1,2')
+    # ── Step 3: rare protocol=0 fallback ──
     if not streams:
         xbmc.log(
-            '[live] %s all QN/format combos exhausted; trying '
-            'protocol=0 fallback' % id, xbmc.LOGINFO,
+            '[live] %s all attempts failed; trying protocol=0' % id,
+            xbmc.LOGINFO,
         )
-        for try_qn in (qn, 400, 250, 150, 80):
-            _, _, _, _, streams = _fetch(id, try_qn, '0,1,2', protocol='0')
-            if streams:
-                break
+        streams = _fetch(id, 80, '0,1,2', protocol='0')
     if not streams:
         xbmc.log('[live] no playurl for room_id=%s' % id, xbmc.LOGERROR)
         xbmcgui.Dialog().notification(
