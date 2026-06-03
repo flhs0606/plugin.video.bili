@@ -392,15 +392,33 @@ def live(id):
         live_ass, _ = start_live_danmaku(id, uid, cookie)
 
     # ── inputstream.adaptive 唯一输出 ──
+    is_m3u8 = bool(master_url)
+    live_props = {
+        'inputstream': 'inputstream.adaptive',
+        'inputstream.adaptive.manifest_type': 'hls',
+        'inputstream.adaptive.manifest_headers': _BILI_REFERER,
+        'inputstream.adaptive.stream_headers': _BILI_REFERER,
+    }
+    if is_m3u8:
+        # Real m3u8 playlist: full refresh is correct — Kodi reads
+        # the refreshed manifest and resumes from the new live edge.
+        live_props['inputstream.adaptive.manifest_update_params'] = 'full'
+    else:
+        # Raw m4s URL (B 站 http_stream protocol). There is no
+        # playlist to refresh; the URL itself is the only segment.
+        # Setting manifest_update_params='full' would re-download the
+        # same file repeatedly, which makes the on-screen duration
+        # counter jump (5s -> 4s -> 5s). Setting it to 'append'
+        # means adaptive won't poll for new segments; for a single
+        # m4s that's fine — the URL doesn't change, so no refresh
+        # is needed. Live edge tracking degrades but the user
+        # actually sees a stable duration.
+        live_props['inputstream.adaptive.manifest_update_params'] = 'append'
+        live_props['inputstream.adaptive.live_segment_as_last'] = 'true'
+
     plugin.set_resolved_url({
         'path': chosen,
         'is_playable': True,
         'is_live': True,
-        'properties': {
-            'inputstream': 'inputstream.adaptive',
-            'inputstream.adaptive.manifest_type': 'hls',
-            'inputstream.adaptive.manifest_update_params': 'full',
-            'inputstream.adaptive.manifest_headers': _BILI_REFERER,
-            'inputstream.adaptive.stream_headers': _BILI_REFERER,
-        },
+        'properties': live_props,
     }, subtitles=live_ass)

@@ -105,7 +105,7 @@ def _audio_channel_cfg(track) -> str:
     ) % (scheme, v)
 
 
-def _build_audio_as(track) -> list:
+def _build_audio_as(track, is_preferred: bool = False) -> list:
     codec_attr = track.codec_mpd
     channel_cfg = _audio_channel_cfg(track)
     label = _xml_escape(track.label or str(track.id))
@@ -118,7 +118,20 @@ def _build_audio_as(track) -> list:
         'label="%s">\n' % (codec_attr, label),
     ]
     lines.append('\t\t\t%s\n' % channel_cfg)
-    if track.kind == 'aac' and track.id == PREF_HIGH:
+    # Mark the user's preferred track as main so inputstream.adaptive
+    # auto-selects it. We mark the *first* AS in the MPD (which is
+    # the user-preferred track per select_audio_tracks ordering),
+    # regardless of codec kind — without this, adaptive picks
+    # based on the first AS in the manifest, which is what we want,
+    # but the lack of <Role value="main"/> would make Kodi flag
+    # the choice as 'supplementary' on some builds. Belt and braces.
+    if is_preferred:
+        lines.append(
+            '\t\t\t<Role schemeIdUri="urn:mpeg:dash:role:2011" '
+            'value="main"/>\n',
+        )
+    elif track.kind == 'aac' and track.id == PREF_HIGH:
+        # Backwards-compat: also mark the legacy 30280 default.
         lines.append(
             '\t\t\t<Role schemeIdUri="urn:mpeg:dash:role:2011" '
             'value="main"/>\n',
@@ -183,7 +196,10 @@ def generate_mpd(dash: dict) -> str:
         '\t<Period>\n',
     ]
     lines.extend(_build_video_as(videos))
-    for t in audio_tracks:
-        lines.extend(_build_audio_as(t))
+    for idx, t in enumerate(audio_tracks):
+        # First track per select_audio_tracks ordering is the
+        # user's preferred one (Atmos / Hi-Res FLAC / primary AAC).
+        # Mark it main so inputstream.adaptive auto-selects it.
+        lines.extend(_build_audio_as(t, is_preferred=(idx == 0)))
     lines.append('\t</Period>\n</MPD>\n')
     return ''.join(lines)
