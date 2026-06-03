@@ -415,52 +415,37 @@ def live(id):
         cookie = get_cookie()
         live_ass, _ = start_live_danmaku(id, uid, cookie)
 
-    # ── 输出路径选择 ──
-    # B 站返回的直播 URL 形态分两种:
-    #   master_url 非空  → 真 m3u8 playlist (http_hls 协议): 用
-    #     inputstream.adaptive + manifest_type='hls' + full refresh,
-    #     这是它本来的设计场景。
-    #   master_url 空 + urls[0]  → 裸 m4s URL (http_stream 协议):
-    #     B 站返回的就是个带签名的 m4s 文件, 没有 playlist 概念.
-    #     用 inputstream.adaptive 强行当 HLS manifest 处理是扭曲用法,
-    #     manifest 每次 refresh adaptive 都重算 segment index, OSD
-    #     时长会跳; 而 m4s URL 本身有 TTL, 几小时后失效, adaptive
-    #     refresh 也会失败.
-    # 优雅的做法: raw m4s 走 Kodi 内置 ffmpeg pipe 风格
-    # (`url|headers&reconnect=1&...`), ffmpeg 原生处理 m4s + 内置
-    # reconnect; 不引入 inputstream.ffmpegdirect 也不需要 adaptive 扮 HLS.
+    # ── 输出路径: ffmpeg pipe (统一) ──
+    # B 站 getRoomPlayInfo 现在对几乎所有房间都把 m3u8 放在
+    # urls[0] 而不是 master_url 字段 (B 站 API 行为变化) — 用户
+    # log 验证: 4/4 测试房间 master=no. master_url 分流因此触发
+    # 不到, inputstream.adaptive 直播路径在 v0.4.0 是死代码.
+    #
+    # 统一 ffmpeg pipe 处理所有形态:
+    #   m3u8 → Kodi ffmpeg 探测 .m3u8 自动走 HLS demuxer
+    #           + 周期 refresh playlist 拉新 .ts segment.
+    #   m4s  → Kodi ffmpeg 探测 .m4s 直接 fmp4 demuxer
+    #          (单文件, reconnect 兜底).
+    # 两路共用 reconnect=1&reconnect_streamed=1&reconnect_delay_max=5.
     is_m3u8 = bool(master_url)
     ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     ffmpeg_hdr = 'Referer=https://www.bilibili.com&User-Agent=%s&Origin=https://www.bilibili.com' % ua
 
-    if is_m3u8:
-        item = {
-            'path': chosen,
-            'is_playable': True,
-            'is_live': True,
-            'properties': {
-                'inputstream': 'inputstream.adaptive',
-                'inputstream.adaptive.manifest_type': 'hls',
-                'inputstream.adaptive.manifest_update_params': 'full',
-                'inputstream.adaptive.manifest_headers': _BILI_REFERER,
-                'inputstream.adaptive.stream_headers': _BILI_REFERER,
-            },
-        }
-    else:
-        # raw m4s → ffmpeg pipe. ffmpeg options are pipe-style:
-        #   url|header=value&reconnect=1&reconnect_streamed=1&reconnect_delay_max=5
-        # `reconnect` is ffmpeg's own HTTP reconnect, not Kodi's.
-        # We omit the 'properties' key entirely so plugin_compat's
-        # item.get('properties', {}) short-circuits to {} and skips
-        # the inputstream branch — Kodi ffmpeg demuxer is used
-        # directly with no inputstream.* hint.
-        live_url = '%s|%s&reconnect=1&reconnect_streamed=1&reconnect_delay_max=5' % (
-            chosen, ffmpeg_hdr,
-        )
-        item = {
-            'path': live_url,
-            'is_playable': True,
-            'is_live': True,
-        }
+    live_url = '%s|%s&reconnect=1&reconnect_streamed=1&reconnect_delay_max=5' % (
+        chosen, ffmpeg_hdr,
+    )
+
+    item = {
+        'path': live_url,
+        'is_playable': True,
+        'is_live': True,
+    }
+    xbmc.log(
+        '[live] ffmpeg pipe %s room_id=%s path_kind=%s' % (
+            fmt_name, id,
+            'm3u8' if is_m3u8 or chosen.endswith('.m3u8') else 'm4s',
+        ),
+        xbmc.LOGINFO,
+    )
 
     plugin.set_resolved_url(item, subtitles=live_ass)
