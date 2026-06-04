@@ -86,11 +86,11 @@
 				</setting>
 				<setting id="danmaku_stay_time" type="integer" label="30019" help="30017">
 					<level>0</level>
-					<default>5</default>
+					<default>10</default>
 					<constraints>
 						<minimum>1</minimum>
 						<step>1</step>
-						<maximum>20</maximum>
+						<maximum>30</maximum>
 					</constraints>
 					<control type="slider" format="integer">
 						<popup>false</popup>
