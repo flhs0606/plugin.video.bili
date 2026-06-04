@@ -320,7 +320,7 @@ def WriteCommentBilibiliPositioned(f, c, width, height, styleid):
         isborder = comment_args.get(11, 'true')
         from_rotarg = ConvertFlashRotation(rotate_y, rotate_z, from_x, from_y, width, height)
         to_rotarg = ConvertFlashRotation(rotate_y, rotate_z, to_x, to_y, width, height)
-        styles = ['\\org(%d, %d)' % (width / 2, height / 2)]
+        common_styles = [r'\org(%d, %d)' % (width / 2, height / 2)]
         if from_rotarg[0:2] == to_rotarg[0:2]:
             styles.append('\\pos(%.0f, %.0f)' % (from_rotarg[0:2]))
         else:
@@ -363,6 +363,7 @@ def WriteCommentAcfunPositioned(f, c, width, height, styleid):
         isHeight = int(isHeight)  # True -> 1
         return AcfunPlayerSize[isHeight] * ZoomFactor[0] * InputPos * 0.001 + ZoomFactor[isHeight + 1]
 
+    @staticmethod
     def GetTransformStyles(x=None, y=None, scale_x=None, scale_y=None, rotate_z=None, rotate_y=None, color=None, alpha=None):
         styles = []
         out_x, out_y = x, y
@@ -397,7 +398,7 @@ def WriteCommentAcfunPositioned(f, c, width, height, styleid):
     try:
         comment_args = c[3]
         text = ASSEscape(str(comment_args['n']).replace('\r', '\n'))
-        common_styles = ['\org(%d, %d)' % (width / 2, height / 2)]
+        common_styles = [r'\org(%d, %d)' % (width / 2, height / 2)]
         anchor = {0: 7, 1: 8, 2: 9, 3: 4, 4: 5, 5: 6, 6: 1, 7: 2, 8: 3}.get(comment_args.get('c', 0), 7)
         if anchor != 7:
             common_styles.append('\\an%s' % anchor)
@@ -597,7 +598,11 @@ def TestFreeRows(rows, c, row, width, height, bottomReserved, duration_marquee, 
             res += 1
     else:
         try:
-            thresholdTime = c_t - duration_marquee * (1 - width / (c[8] + width))
+            # thresholdTime: The timestamp at which the leading edge of the
+            # currently exiting danmaku will be at the right edge of the screen.
+            # Used to determine whether the next scrolling danmaku at the same row
+            # can fit without overlap.
+            thresholdTime = c_t - duration_marquee * (1.0 - float(width) / (c[8] + width))
         except ZeroDivisionError:
             thresholdTime = c_t - duration_marquee
         row_list = rows[c_pos]
