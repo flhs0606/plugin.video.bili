@@ -19,8 +19,8 @@ v0.4.0 流程：
 import os
 
 from core import plugin, xbmc, xbmcvfs
-from utils import getSetting, get_temp_path, make_dirs, tag
-from api import get_api_data, raw_get_api_data, get_cookie
+from utils import getSetting, get_temp_path, tag
+from api import get_api_data, get_cookie, BILI_REFERER
 from live import stop_all_live_danmaku
 from playback import (
     generate_mpd, generate_ass, report_history,
@@ -29,8 +29,6 @@ from playback import (
 
 # wiliwili FNVAL
 _WILIWILI_FNVAL = 4048
-
-_BILI_REFERER = 'Referer=https://www.bilibili.com'
 
 
 def _try_wiliwili_playurl(bvid, cid, qn, fnval=None):
@@ -52,7 +50,7 @@ def _try_wiliwili_playurl(bvid, cid, qn, fnval=None):
         xbmc.log('[wiliwili-playurl] WBI sign failed: %s' % e, xbmc.LOGWARNING)
 
     for path in ('/x/player/wbi/playurl', '/x/web-interface/playurl'):
-        res = raw_get_api_data(path, data=params)
+        res = get_api_data(path, data=params, raw=True)
         if res.get('code') == 0 and (res.get('data') or res.get('result')):
             xbmc.log('[wiliwili-playurl] success via %s' % path, xbmc.LOGINFO)
             return path, res
@@ -173,7 +171,7 @@ def video(id, cid, ispgc, audio_only, title):
     if ispgc:
         params = {'bvid': id, 'cid': cid, 'qn': qn, 'fnval': fnval,
                   'fnver': 0, 'fourk': 1}
-        res = raw_get_api_data(url, data=params)
+        res = get_api_data(url, data=params, raw=True)
         if res.get('code') != 0:
             return
     else:
@@ -184,7 +182,7 @@ def video(id, cid, ispgc, audio_only, title):
                       'fnver': 0, 'fourk': 1,
                       'from_client': 'BROWSER', 'isGaiaAvoided': 'true',
                       'web_location': '1315873', 'need_fragment': 'false'}
-            res = raw_get_api_data('/x/player/playurl', data=params)
+            res = get_api_data('/x/player/playurl', data=params, raw=True)
             if res.get('code') != 0:
                 return
             url = '/x/player/playurl'
@@ -203,7 +201,7 @@ def video(id, cid, ispgc, audio_only, title):
         t = tracks[0]
         video_url = {
             'label': title,
-            'path': '%s|%s' % (t.base_url, _BILI_REFERER),
+            'path': '%s|%s' % (t.base_url, BILI_REFERER),
             'is_playable': True,
         }
         plugin.set_resolved_url(video_url)
@@ -212,7 +210,7 @@ def video(id, cid, ispgc, audio_only, title):
     # 2) DASH: 写 MPD → set_resolved_url 喂 inputstream.adaptive
     if 'dash' in data:
         basepath = get_temp_path()
-        if not basepath or not make_dirs(basepath):
+        if not basepath:
             return
 
         try:
@@ -246,8 +244,8 @@ def video(id, cid, ispgc, audio_only, title):
             'properties': {
                 'inputstream': 'inputstream.adaptive',
                 'inputstream.adaptive.manifest_type': 'mpd',
-                'inputstream.adaptive.manifest_headers': _BILI_REFERER,
-                'inputstream.adaptive.stream_headers': _BILI_REFERER,
+                'inputstream.adaptive.manifest_headers': BILI_REFERER,
+                'inputstream.adaptive.stream_headers': BILI_REFERER,
             },
         }
 
@@ -255,7 +253,7 @@ def video(id, cid, ispgc, audio_only, title):
         durl_url = data['durl'][0]['url']
         if durl_url:
             video_url = {
-                'path': '%s|%s' % (durl_url, _BILI_REFERER),
+                'path': '%s|%s' % (durl_url, BILI_REFERER),
                 'is_playable': True,
             }
     else:

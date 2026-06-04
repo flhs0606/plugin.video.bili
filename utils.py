@@ -44,8 +44,20 @@ def notify_error(res):
     notify('提示', f'{res.get("code", -1)}: {message}')
 
 
+# 缓存 Addon 单例：localize / getSetting 在路由里调用频繁，每次新建
+# xbmcaddon.Addon() 实例在 Kodi 21 里要走 Python ↔ C 桥接，省一次是一次。
+_addon = None
+
+
+def _get_addon():
+    global _addon
+    if _addon is None:
+        _addon = xbmcaddon.Addon()
+    return _addon
+
+
 def localize(id):
-    return xbmcaddon.Addon().getLocalizedString(id)
+    return _get_addon().getLocalizedString(id)
 
 
 def getSetting(name):
@@ -62,11 +74,11 @@ def getSetting(name):
         return xbmcplugin.getSetting(handle, name)
     except (IndexError, ValueError):
         # service.py or any non-plugin context
-        return xbmcaddon.Addon().getSetting(name)
+        return _get_addon().getSetting(name)
 
 
 def clear_text(text):
-    return text.replace('<em class=\"keyword\">', '').replace('</em>', '')
+    return text.replace('<em class="keyword">', '').replace('</em>', '')
 
 
 # 播放统计字段映射：(字段名, 中文标签)，按优先级排列；同标签只取第一个匹配
@@ -111,42 +123,39 @@ def parse_duration(duration_text):
 
 
 def make_dirs(path):
+    """确保目录存在（不存在则创建）。返回 None。"""
     if not path.endswith('/'):
-        path = ''.join([path, '/'])
+        path = path + '/'
     path = xbmc.translatePath(path)
+    if xbmcvfs.exists(path):
+        return
+    try:
+        _ = xbmcvfs.mkdirs(path)
+    except Exception as e:
+        xbmc.log('[plugin.video.bili] mkdirs via xbmcvfs failed: %s' % str(e), xbmc.LOGWARNING)
     if not xbmcvfs.exists(path):
         try:
-            _ = xbmcvfs.mkdirs(path)
+            os.makedirs(path)
         except Exception as e:
-            xbmc.log('[plugin.video.bili] mkdirs via xbmcvfs failed: %s' % str(e), xbmc.LOGWARNING)
-        if not xbmcvfs.exists(path):
-            try:
-                os.makedirs(path)
-            except Exception as e:
-                xbmc.log('[plugin.video.bili] mkdirs via os failed: %s' % str(e), xbmc.LOGWARNING)
-        return xbmcvfs.exists(path)
-
-    return True
+            xbmc.log('[plugin.video.bili] mkdirs via os failed: %s' % str(e), xbmc.LOGWARNING)
 
 
 def get_temp_path():
     temppath = xbmc.translatePath('special://temp/plugin.video.bili/')
-    if not make_dirs(temppath):
-        return
+    make_dirs(temppath)
     return temppath
 
 
-def safe_remove_dir(path, log_prefix='[plugin.video.bili]'):
-    """安全删除目录：先尝试 xbmcvfs.rmdir，失败则回退 shutil.rmtree"""
+def remove_dir(path):
+    """强制删除目录：xbmcvfs.rmdir force=True → shutil.rmtree fallback。"""
     if not os.path.isdir(path):
-        return True
+        return
     try:
         xbmcvfs.rmdir(path, force=True)
     except Exception as e:
-        xbmc.log(f'{log_prefix} xbmcvfs.rmdir failed: {e}', xbmc.LOGWARNING)
+        xbmc.log('[plugin.video.bili] xbmcvfs.rmdir failed: %s' % e, xbmc.LOGWARNING)
     if os.path.isdir(path):
         try:
             shutil.rmtree(path)
         except Exception as e:
-            xbmc.log(f'{log_prefix} shutil.rmtree failed: {e}', xbmc.LOGWARNING)
-    return not os.path.isdir(path)
+            xbmc.log('[plugin.video.bili] shutil.rmtree failed: %s' % e, xbmc.LOGWARNING)

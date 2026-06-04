@@ -12,10 +12,6 @@ from ._helpers import (
 )
 
 
-# B 站 referer，用于 inputstream.adaptive 拉取 HLS manifest 与分片
-_BILI_REFERER = 'Referer=https://www.bilibili.com'
-
-
 # B 站直播分区（静态快照；如需更新请同步 B 站 API）
 _LIVE_AREAS = {
     '2': {
@@ -266,8 +262,8 @@ def live_area(pid, id, page):
     return lives
 
 
-@plugin.route('/followingLive/<page>/')
-def followingLive(page):
+@plugin.route('/following_live/<page>/')
+def following_live(page):
     page = int(page)
     items = []
     if get_uid() == '0':
@@ -305,7 +301,7 @@ def followingLive(page):
             'info_type': 'video',
         })
     if page < res['data']['totalPage']:
-        append_next_page(items, 'followingLive', page=page + 1)
+        append_next_page(items, 'following_live', page=page + 1)
     return items
 
 

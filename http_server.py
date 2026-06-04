@@ -55,46 +55,42 @@ class BilibiliRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
             return None
         return file_path
 
-    def do_GET(self):
-        if not self.path.endswith('.mpd'):
-            self.send_error(404, 'Not Found')
-            return
-        file_path = self._safe_file_path(self.path)
-        if not file_path:
-            self.send_error(403, 'Forbidden')
-            return
-        try:
-            with open(file_path, 'rb') as f:
-                self.send_response(200)
-                # inputstream.adaptive needs the standard DASH MIME type
-                # to auto-detect the manifest format. application/xml+dash
-                # is non-standard and adaptive rejects it.
-                self.send_header('Content-Type', 'application/dash+xml')
-                self.send_header('Content-Length', os.path.getsize(file_path))
-                self.end_headers()
-                while True:
-                    chunk = f.read(self.chunk_size)
-                    if not chunk:
-                        break
-                    self.wfile.write(chunk)
-        except IOError:
-            self.send_error(404, 'File Not Found')
-
-    def do_HEAD(self):
-        if not self.path.endswith('.mpd'):
-            self.send_error(501, 'Not Implemented')
-            return
-        file_path = self._safe_file_path(self.path)
-        if not file_path:
-            self.send_error(403, 'Forbidden')
-            return
+    def _send_mpd(self, file_path):
+        """公共：发送 MPD 文件内容（GET 用 stream，HEAD 用 header-only）。"""
         if not os.path.isfile(file_path):
             self.send_error(404, 'File Not Found')
             return
+        size = os.path.getsize(file_path)
         self.send_response(200)
+        # inputstream.adaptive needs the standard DASH MIME type
+        # to auto-detect the manifest format. application/xml+dash
+        # is non-standard and adaptive rejects it.
         self.send_header('Content-Type', 'application/dash+xml')
-        self.send_header('Content-Length', os.path.getsize(file_path))
+        self.send_header('Content-Length', size)
         self.end_headers()
+        # GET 时 method 不是 HEAD 才写 body
+        if self.command != 'HEAD':
+            try:
+                with open(file_path, 'rb') as f:
+                    while True:
+                        chunk = f.read(self.chunk_size)
+                        if not chunk:
+                            break
+                        self.wfile.write(chunk)
+            except IOError:
+                pass
+
+    def do_GET(self):
+        file_path = self._safe_file_path(self.path)
+        if not file_path:
+            self.send_error(404 if not self.path.endswith('.mpd') else 403,
+                            'Not Found' if not self.path.endswith('.mpd') else 'Forbidden')
+            return
+        self._send_mpd(file_path)
+
+    def do_HEAD(self):
+        # HEAD 走和 GET 一样的逻辑；_send_mpd 看 self.command 决定是否发 body
+        self.do_GET()
 
     def log_message(self, format, *args):
         # Silence BaseHTTPServer's stderr logger; Kodi logs are sufficient.

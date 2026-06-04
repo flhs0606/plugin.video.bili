@@ -15,7 +15,7 @@ def _categories() -> list:
         {'name': 'popular_weekly',  'id': 30114, 'path': plugin.url_for('popular_weekly')},
         {'name': 'popular_history', 'id': 30115, 'path': plugin.url_for('popular_history')},
         {'name': 'live_areas',      'id': 30104, 'path': plugin.url_for('live_areas', level=1, id=0)},
-        {'name': 'followingLive',   'id': 30105, 'path': plugin.url_for('followingLive', page=1)},
+        {'name': 'followingLive',  'id': 30105, 'path': plugin.url_for('following_live', page=1)},
         {'name': 'my_collection',   'id': 30106, 'path': plugin.url_for('my_collection')},
         {'name': 'web_dynamic',     'id': 30107, 'path': plugin.url_for('web_dynamic', page=1, offset=0)},
         {'name': 'followings',      'id': 30108, 'path': plugin.url_for('followings', id=uid, page=1)},

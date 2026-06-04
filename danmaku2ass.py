@@ -789,7 +789,7 @@ def export(func):
 
 
 @export
-def Danmaku2ASS(input_files, input_format, output_file, stage_width, stage_height, reserve_blank=0, font_face=_('(FONT) sans-serif')[7:], font_size=25.0, text_opacity=1.0, duration_marquee=5.0, duration_still=5.0, comment_filter=None, comment_filters_file=None, is_reduce_comments=False, progress_callback=None):
+def Danmaku2ASS(input_files, input_format, output_file, stage_width, stage_height, reserve_blank=0, font_face=_('(FONT) sans-serif')[7:], font_size=25.0, text_opacity=1.0, duration_marquee=5.0, duration_still=5.0, comment_filter=None, comment_filters_file=None, is_reduce_comments=False, progress_callback=None, comments=None):
     comment_filters = [comment_filter]
     if comment_filters_file:
         with open(comment_filters_file, 'r') as f:
@@ -803,7 +803,8 @@ def Danmaku2ASS(input_files, input_format, output_file, stage_width, stage_heigh
         except:
             raise ValueError(_('Invalid regular expression: %s') % comment_filter)
     fo = None
-    comments = ReadComments(input_files, input_format, font_size)
+    if comments is None:
+        comments = ReadComments(input_files, input_format, font_size)
     try:
         if output_file:
             fo = ConvertToFile(output_file, 'w', encoding='utf-8-sig', errors='replace', newline='\r\n')

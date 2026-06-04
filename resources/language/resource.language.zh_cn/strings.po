@@ -331,17 +331,13 @@ msgctxt "#30067"
 msgid "Atmos / Hi-Res requires a Bilibili premium account. Falls back to a lower track if the selected one is unavailable. Kodi audio output must be set to Passthrough to deliver Atmos to a receiver."
 msgstr "杜比全景声 / Hi-Res 需要 B 站大会员。首选音轨不可用时自动降级。需要 Kodi 音频输出设为 Passthrough 才能将 Atmos 透传给功放。"
 
-msgctxt "#30068"
-msgid "Debug Cookie (VIP / Atmos diagnostic)"
-msgstr "调试 Cookie（VIP / Atmos 诊断）"
-
 msgctxt "#30069"
-msgid "Load Cookie From File (when paste fails)"
-msgstr "从文件加载 Cookie（输入框截断时用）"
+msgid "Load Cookie From File"
+msgstr "从文件加载 Cookie"
 
 msgctxt "#30070"
-msgid "Create cookie.txt with the full cookie string from PC browser, then click this button. File path: special://profile/addon_data/plugin.video.bili/cookie.txt"
-msgstr "把 PC 浏览器的整段 cookie 写到 cookie.txt（每行一条），然后点此按钮。文件路径：special://profile/addon_data/plugin.video.bili/cookie.txt"
+msgid "Write the full cookie string (copied from PC browser devtools) to cookie.txt, then click this button. The first 2 paths are tried in order: 1) special://profile/addon_data/plugin.video.bili/cookie.txt  2) special://home/addons/plugin.video.bili/cookie.txt"
+msgstr "把 PC 浏览器开发者工具里复制的整段 cookie 写到 cookie.txt，然后点此按钮。按顺序查找两个路径：1) special://profile/addon_data/plugin.video.bili/cookie.txt  2) special://home/addons/plugin.video.bili/cookie.txt"
 
 msgid "30142"
 msgstr "无法获取直播流"

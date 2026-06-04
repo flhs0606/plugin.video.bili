@@ -43,6 +43,16 @@
 						<data>RunPlugin(plugin://plugin.video.bili/logout/)</data>
 					</control>
 				</setting>
+				<setting id="load_cookie_file" type="string" label="30069" help="30070">
+					<level>0</level>
+					<default/>
+					<constraints>
+						<allowempty>true</allowempty>
+					</constraints>
+					<control type="button" format="action">
+						<data>RunPlugin(plugin://plugin.video.bili/load_cookie_file/)</data>
+					</control>
+				</setting>
 			</group>
 			<group id="2" label="30004">
 				<setting id="enable_danmaku" type="boolean" label="30005" help="">
@@ -110,21 +120,6 @@
 					<default>true</default>
 					<control type="toggle"/>
 				</setting>
-				<setting id="install_inputstream_adaptive" type="string" label="30131" help="">
-					<level>0</level>
-					<default/>
-					<constraints>
-						<allowempty>true</allowempty>
-					</constraints>
-					<control type="button" format="action">
-						<data>InstallAddon(inputstream.adaptive)</data>
-					</control>
-					<dependencies>
-                        <dependency type="enable">
-                            <condition name="InfoBool" on="property">!System.HasAddon(inputstream.adaptive)</condition>
-                        </dependency>
-                    </dependencies>
-				</setting>
 				<setting id="server_port" type="integer" label="30012" help="">
 					<level>0</level>
 					<default>54321</default>
@@ -159,7 +154,7 @@
 				</setting>
 				<setting id="video_encoding" type="integer" label="30035" help="">
 					<level>0</level>
-					<default>7</default>
+					<default>12</default>
 					<constraints>
 						<options>
 							<option label="30036">13</option>
@@ -169,6 +164,29 @@
 					</constraints>
 					<control type="list" format="string">
 						<heading>30035</heading>
+					</control>
+					<dependencies>
+                        <dependency type="enable">
+                            <condition operator="is" setting="enable_dash">true</condition>
+                        </dependency>
+                    </dependencies>
+				</setting>
+			</group>
+			<group id="7" label="30060">
+				<setting id="audio_quality" type="integer" label="30061" help="30067">
+					<level>0</level>
+					<default>30280</default>
+					<constraints>
+						<options>
+							<option label="30062">30250</option>
+							<option label="30063">30251</option>
+							<option label="30064">30280</option>
+							<option label="30065">30232</option>
+							<option label="30066">30216</option>
+						</options>
+					</constraints>
+					<control type="list" format="string">
+						<heading>30061</heading>
 					</control>
 					<dependencies>
                         <dependency type="enable">
@@ -196,7 +214,7 @@
 				</setting>
 				<setting id="live_video_encoding" type="integer" label="30047" help="">
 					<level>0</level>
-					<default>7</default>
+					<default>12</default>
 					<constraints>
 						<options>
 							<option label="30048">12</option>

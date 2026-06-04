@@ -1,5 +1,5 @@
 # -*- coding:utf-8 -*-
-"""点播 / 直播播放辅助：listitem 构建、分辨率、MPD、ASS、历史、直播选择、CDN 代理。"""
+"""点播 / 直播播放辅助：listitem 构建、分辨率、MPD、ASS、历史、直播选择。"""
 from .item import get_video_item, parse_plot
 from .resolution import choose_resolution
 from .audio import (

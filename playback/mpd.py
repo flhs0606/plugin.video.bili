@@ -19,9 +19,7 @@ from xml.sax.saxutils import escape as _xml_escape
 
 from core import xbmc
 from .resolution import choose_resolution
-from .audio import (
-    collect_audio_tracks, select_by_user_pref, PREF_HIGH,
-)
+from .audio import collect_audio_tracks, select_by_user_pref
 
 
 # ── 工具函数 ────────────────────────────────────────────────────────────
@@ -41,6 +39,8 @@ def _duration_to_iso8601(seconds) -> str:
 
 
 def _amp(s: str) -> str:
+    """Escape '&' for XML PCDATA/BaseURL. B 站 CDN URL 不会出现 <, >, ", '，
+    所以这里只做最小化转义；属性值（label 等）走 _xml_escape。"""
     return s.replace('&', '&amp;')
 
 
@@ -126,12 +126,6 @@ def _build_audio_as(track, is_preferred: bool = False) -> list:
     # but the lack of <Role value="main"/> would make Kodi flag
     # the choice as 'supplementary' on some builds. Belt and braces.
     if is_preferred:
-        lines.append(
-            '\t\t\t<Role schemeIdUri="urn:mpeg:dash:role:2011" '
-            'value="main"/>\n',
-        )
-    elif track.kind == 'aac' and track.id == PREF_HIGH:
-        # Backwards-compat: also mark the legacy 30280 default.
         lines.append(
             '\t\t\t<Role schemeIdUri="urn:mpeg:dash:role:2011" '
             'value="main"/>\n',

@@ -331,16 +331,12 @@ msgctxt "#30067"
 msgid "Atmos / Hi-Res requires a Bilibili premium account. Falls back to a lower track if the selected one is unavailable. Kodi audio output must be set to Passthrough to deliver Atmos to a receiver."
 msgstr ""
 
-msgctxt "#30068"
-msgid "Debug Cookie (VIP / Atmos diagnostic)"
-msgstr ""
-
 msgctxt "#30069"
-msgid "Load Cookie From File (when paste fails)"
+msgid "Load Cookie From File"
 msgstr ""
 
 msgctxt "#30070"
-msgid "Create cookie.txt with the full cookie string from PC browser, then click this button. File path: special://profile/addon_data/plugin.video.bili/cookie.txt"
+msgid "Write the full cookie string (copied from PC browser devtools) to cookie.txt, then click this button. The first 2 paths are tried in order: 1) special://profile/addon_data/plugin.video.bili/cookie.txt  2) special://home/addons/plugin.video.bili/cookie.txt"
 msgstr ""
 
 msgid "30142"
