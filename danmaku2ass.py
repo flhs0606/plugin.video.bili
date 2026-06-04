@@ -710,11 +710,17 @@ def CalculateLength(s):
 
 
 def ConvertTimestamp(timestamp):
-    timestamp = round(timestamp * 100.0)
-    hour, minute = divmod(timestamp, 360000)
-    minute, second = divmod(minute, 6000)
-    second, centsecond = divmod(second, 100)
-    return '%d:%02d:%02d.%02d' % (int(hour), int(minute), int(second), int(centsecond))
+    """秒数 → ASS 时间格式 H:MM:SS.cs，支持负数。"""
+    if timestamp < 0:
+        return '-' + ConvertTimestamp(-timestamp)
+    cs = round(timestamp * 100)
+    h = cs // 360000
+    cs %= 360000
+    m = cs // 6000
+    cs %= 6000
+    s = cs // 100
+    c = cs % 100
+    return '%d:%02d:%02d.%02d' % (h, m, s, c)
 
 
 def _ClipByte(x):
@@ -812,7 +818,7 @@ def Danmaku2ASS(input_files, input_format, output_file, stage_width, stage_heigh
         comments = ReadComments(input_files, input_format, font_size)
     try:
         if output_file:
-            fo = ConvertToFile(output_file, 'w', encoding='utf-8-sig', errors='replace', newline='\r\n')
+            fo = ConvertToFile(output_file, 'w', encoding='utf-8-sig', errors='replace', newline='\n')
         else:
             fo = sys.stdout
         ProcessComments(comments, fo, stage_width, stage_height, reserve_blank, font_face, font_size, text_opacity, duration_marquee, duration_still, filters_regex, is_reduce_comments, progress_callback)
