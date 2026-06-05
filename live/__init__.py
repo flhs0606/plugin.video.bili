@@ -3,13 +3,11 @@
 from .danmaku import (
     LiveDanmakuClient,
     start_live_danmaku,
-    stop_live_danmaku,
     stop_all_live_danmaku,
 )
 
 __all__ = [
     'LiveDanmakuClient',
     'start_live_danmaku',
-    'stop_live_danmaku',
     'stop_all_live_danmaku',
 ]

@@ -77,13 +77,10 @@ class LiveDanmakuClient:
         # 否则 libass 看到事件 Start 远小于 now（Kodi PTS），全部
         # 过期。__init__ 在 set_resolved_url 之前立即执行，错位 0~5s。
         self._start_time  = time.time()
-        # danmaku2ass 格式: [(timeline, unix_ts, seq, text, pos, color, size_px, height, width), ...]
+        # 喂给 ProcessComments 的格式: (timeline, text, pos, color, size_px, height, width)
         # pos: 0=滚动, 1=底部居中, 2=顶部居中, 3=反向滚动
         self.danmaku_list = []
-        self._seq         = 0
         self.lock         = threading.Lock()
-        # 弹幕显示上限：80 条足够填满屏幕，更多只浪费 CPU
-        self.MAX_LIST = 80
 
     def _get_token_wbi(self):
         """WBI 签名请求 getDanmuInfo。"""
@@ -169,7 +166,6 @@ class LiveDanmakuClient:
         mode     = int(meta[1]) if len(meta) > 1 else 1   # 1=滚动,4=底部,5=顶部
         fontsize = int(meta[2]) if len(meta) > 2 else 25
         color    = int(meta[3]) if len(meta) > 3 else 0xffffff
-        dm_ts    = int(meta[4]) if len(meta) > 4 else int(time.time())
 
         text = str(info[1]) if info[1] else ''
         if not text.strip():
@@ -192,8 +188,7 @@ class LiveDanmakuClient:
             return
 
         size_px   = fontsize * self.font_size / 25.0
-        # 换行符已替换为 /，text.count('\n') 永远为 0——
-        # 单条弹幕的 height_px 等于单行高度
+        # 换行符已替换为 /，单条弹幕按单行算
         height_px = size_px
         width_px  = CalculateLength(text) * size_px
 
@@ -201,10 +196,9 @@ class LiveDanmakuClient:
         # writer 的 cutoff 过滤跟 ProcessComments 算 Start/End 都用
         # 绝对秒数。
         timeline = time.time() - self._start_time
-        self._seq += 1
         with self.lock:
             self.danmaku_list.append(
-                (timeline, dm_ts, self._seq, text, pos, color, size_px, height_px, width_px)
+                (timeline, text, pos, color, size_px, height_px, width_px)
             )
 
     def _parse_binary(self, data):
@@ -342,34 +336,17 @@ class LiveDanmakuClient:
                 if not self.running:
                     break
                 with self.lock:
-                    # 不再裁剪 danmaku_list 池（v0.4.0 MAX_LIST=80 是
-                    # 防止内存泄漏）。cutoff 过滤已经按 stay_time
-                    # 窗口（22s）清理老弹幕，池大小由密度自然限制：
-                    # 房间密度 5/s × 22s = 110 条，密度 1/s × 22s
-                    # = 22 条。完全取消上限测试消失现象是否还出现。
                     # timeline 用 time.time() - self._start_time（绝对
-                    # 秒数）。v0.5.0 试过用 self._seq + pts_base 把
-                    # Start 重映射到 0..N——错的：m_track 在 m3u8 拉
-                    # 取触发重建时 libass 内部 PTS 不归零，PTS 远超
-                    # End=Start+8，事件全部被判过期。改回绝对秒数
-                    # timeline 是最不坏的选择：setSubtitles 9s 节拍
-                    # 触发 m_track 重建时，新读到的 ASS 事件 Start
-                    # 在 PTS 附近，能"等"到 PTS 增长到 Start（最多
-                    # 等 stay_time 秒），然后渲染——不像 0-based
-                    # 那样立即过期。
+                    # 秒数）。曾试过 0-based 重新映射 Start——错的：
+                    # m_track 在 m3u8 拉取触发重建时 libass 内部 PTS
+                    # 不归零，事件被判过期。绝对秒数 + cutoff 过滤：
+                    # 留 stay_time 窗口内的事件，去掉更早的 stale
+                    # （m_track 重建后看到"全过期"屏幕空白，就是
+                    # stale 引起的）。
                     now_offset = time.time() - self._start_time
                     cutoff = now_offset - self.stay_time - 2
-                    pool = self.danmaku_list  # 全部事件，不裁剪
-                    # 严格按 cutoff 过滤——不留 22 秒前的 stale
-                    # 事件进 ASS。v0.4.0 之前的兜底（<50 取 last 50）
-                    # 会把 timeline 跨度过大的 stale 事件写进 ASS
-                    # 触发 libass m_track 重建后看到"全过期"——
-                    # 屏幕空白。修正：cutoff 过滤后能留几条就几条。
-                    # snapshot 完全不限制——cutoff 窗口（22s）已经
-                    # 防止 stale 事件。池自然限制在 stay_time 内
-                    # 到达的弹幕数（密度 5/s ≈ 110 条；密度 1/s
-                    # ≈ 22 条）。让 libass 完整渲染所有可见事件。
-                    snapshot = [c for c in pool if c[0] >= cutoff]
+                    snapshot = [c for c in self.danmaku_list
+                                if c[0] >= cutoff]
 
                 if not snapshot:
                     continue
@@ -473,6 +450,39 @@ class LiveDanmakuClient:
 _instances = {}
 
 
+def _pid_alive(pid: int) -> bool:
+    """跨平台 PID 存活检测。POSIX 用 signal 0；Windows 用 kernel32。
+
+    PID 不存在 / 无权限 → False。Windows 上若 ctypes 不可用，退化为 True
+    （让 timestamp 检查做主，避免误判存活）。
+    """
+    if pid <= 0:
+        return False
+    if os.name == 'nt':
+        try:
+            import ctypes
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            STILL_ACTIVE = 259
+            h = ctypes.windll.kernel32.OpenProcess(
+                PROCESS_QUERY_LIMITED_INFORMATION, False, pid,
+            )
+            if not h:
+                return False
+            try:
+                code = ctypes.c_ulong()
+                ctypes.windll.kernel32.GetExitCodeProcess(h, ctypes.byref(code))
+                return code.value == STILL_ACTIVE
+            finally:
+                ctypes.windll.kernel32.CloseHandle(h)
+        except Exception:
+            return True  # ctypes 不可用 → 假设活，让 timestamp 检查兜底
+    try:
+        os.kill(pid, 0)
+        return True
+    except (OSError, ProcessLookupError):
+        return False
+
+
 def _acquire_danmaku_lock(room_id, timeout_s=3):
     """跨进程单例锁：确保同一个 room 只有一个 LiveDanmakuClient 跑。
 
@@ -511,14 +521,7 @@ def _acquire_danmaku_lock(room_id, timeout_s=3):
             other_ts = float(parts[1]) if len(parts) > 1 else 0
         except Exception:
             other_pid, other_ts = 0, 0
-        # 检查 PID 是否还活
-        pid_alive = False
-        if other_pid > 0:
-            try:
-                os.kill(other_pid, 0)  # signal 0 只检查不发送
-                pid_alive = True
-            except (OSError, ProcessLookupError):
-                pid_alive = False
+        pid_alive = _pid_alive(other_pid)
         if pid_alive and (now_ts - other_ts) < timeout_s:
             # 别的进程还活且锁未过期，等它退
             time.sleep(0.3)
@@ -635,18 +638,13 @@ def start_live_danmaku(room_id, uid=0, cookie=''):
     return path, c
 
 
-def stop_live_danmaku(room_id):
-    key = str(room_id)
-    if key in _instances:
-        try:
-            _instances[key].stop()
-        except Exception:
-            pass
-        del _instances[key]
-    _release_danmaku_lock(room_id)
-
-
 def stop_all_live_danmaku():
     """停止所有正在运行的直播弹幕线程。"""
     for key in list(_instances.keys()):
-        stop_live_danmaku(key)
+        c = _instances.pop(key, None)
+        if c is not None:
+            try:
+                c.stop()
+            except Exception:
+                pass
+        _release_danmaku_lock(key)
