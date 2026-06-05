@@ -169,11 +169,17 @@ def web_dynamic(page, offset):
         mid = d['modules']['module_author']['mid']
         if 'archive' in major:
             item = major['archive']
+            if not item:
+                # B 站偶发返回 archive=null（原动态被删/草稿/聚合源已下架）
+                continue
             item['author'] = author
             item['mid'] = mid
             video = get_video_item(item)
         elif 'live_rcmd' in major:
-            content = major['live_rcmd']['content']
+            live_rcmd = major['live_rcmd']
+            if not live_rcmd or not live_rcmd.get('content'):
+                continue
+            content = live_rcmd['content']
             item = json.loads(content)
             label = live_status_label(
                 item['live_play_info']['live_status'],
