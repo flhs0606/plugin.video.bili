@@ -320,7 +320,7 @@ def WriteCommentBilibiliPositioned(f, c, width, height, styleid):
         isborder = comment_args.get(11, 'true')
         from_rotarg = ConvertFlashRotation(rotate_y, rotate_z, from_x, from_y, width, height)
         to_rotarg = ConvertFlashRotation(rotate_y, rotate_z, to_x, to_y, width, height)
-        styles = ['\\org(%d, %d)' % (width / 2, height / 2)]
+        common_styles = [r'\org(%d, %d)' % (width / 2, height / 2)]
         if from_rotarg[0:2] == to_rotarg[0:2]:
             styles.append('\\pos(%.0f, %.0f)' % (from_rotarg[0:2]))
         else:
@@ -363,6 +363,7 @@ def WriteCommentAcfunPositioned(f, c, width, height, styleid):
         isHeight = int(isHeight)  # True -> 1
         return AcfunPlayerSize[isHeight] * ZoomFactor[0] * InputPos * 0.001 + ZoomFactor[isHeight + 1]
 
+    @staticmethod
     def GetTransformStyles(x=None, y=None, scale_x=None, scale_y=None, rotate_z=None, rotate_y=None, color=None, alpha=None):
         styles = []
         out_x, out_y = x, y
@@ -397,7 +398,7 @@ def WriteCommentAcfunPositioned(f, c, width, height, styleid):
     try:
         comment_args = c[3]
         text = ASSEscape(str(comment_args['n']).replace('\r', '\n'))
-        common_styles = ['\org(%d, %d)' % (width / 2, height / 2)]
+        common_styles = [r'\org(%d, %d)' % (width / 2, height / 2)]
         anchor = {0: 7, 1: 8, 2: 9, 3: 4, 4: 5, 5: 6, 6: 1, 7: 2, 8: 3}.get(comment_args.get('c', 0), 7)
         if anchor != 7:
             common_styles.append('\\an%s' % anchor)
@@ -597,7 +598,11 @@ def TestFreeRows(rows, c, row, width, height, bottomReserved, duration_marquee, 
             res += 1
     else:
         try:
-            thresholdTime = c_t - duration_marquee * (1 - width / (c[8] + width))
+            # thresholdTime: The timestamp at which the leading edge of the
+            # currently exiting danmaku will be at the right edge of the screen.
+            # Used to determine whether the next scrolling danmaku at the same row
+            # can fit without overlap.
+            thresholdTime = c_t - duration_marquee * (1.0 - float(width) / (c[8] + width))
         except ZeroDivisionError:
             thresholdTime = c_t - duration_marquee
         row_list = rows[c_pos]
@@ -705,11 +710,17 @@ def CalculateLength(s):
 
 
 def ConvertTimestamp(timestamp):
-    timestamp = round(timestamp * 100.0)
-    hour, minute = divmod(timestamp, 360000)
-    minute, second = divmod(minute, 6000)
-    second, centsecond = divmod(second, 100)
-    return '%d:%02d:%02d.%02d' % (int(hour), int(minute), int(second), int(centsecond))
+    """秒数 → ASS 时间格式 H:MM:SS.cs，支持负数。"""
+    if timestamp < 0:
+        return '-' + ConvertTimestamp(-timestamp)
+    cs = round(timestamp * 100)
+    h = cs // 360000
+    cs %= 360000
+    m = cs // 6000
+    cs %= 6000
+    s = cs // 100
+    c = cs % 100
+    return '%d:%02d:%02d.%02d' % (h, m, s, c)
 
 
 def _ClipByte(x):
@@ -789,7 +800,7 @@ def export(func):
 
 
 @export
-def Danmaku2ASS(input_files, input_format, output_file, stage_width, stage_height, reserve_blank=0, font_face=_('(FONT) sans-serif')[7:], font_size=25.0, text_opacity=1.0, duration_marquee=5.0, duration_still=5.0, comment_filter=None, comment_filters_file=None, is_reduce_comments=False, progress_callback=None):
+def Danmaku2ASS(input_files, input_format, output_file, stage_width, stage_height, reserve_blank=0, font_face=_('(FONT) sans-serif')[7:], font_size=25.0, text_opacity=1.0, duration_marquee=5.0, duration_still=5.0, comment_filter=None, comment_filters_file=None, is_reduce_comments=False, progress_callback=None, comments=None):
     comment_filters = [comment_filter]
     if comment_filters_file:
         with open(comment_filters_file, 'r') as f:
@@ -803,10 +814,11 @@ def Danmaku2ASS(input_files, input_format, output_file, stage_width, stage_heigh
         except:
             raise ValueError(_('Invalid regular expression: %s') % comment_filter)
     fo = None
-    comments = ReadComments(input_files, input_format, font_size)
+    if comments is None:
+        comments = ReadComments(input_files, input_format, font_size)
     try:
         if output_file:
-            fo = ConvertToFile(output_file, 'w', encoding='utf-8-sig', errors='replace', newline='\r\n')
+            fo = ConvertToFile(output_file, 'w', encoding='utf-8-sig', errors='replace', newline='\n')
         else:
             fo = sys.stdout
         ProcessComments(comments, fo, stage_width, stage_height, reserve_blank, font_face, font_size, text_opacity, duration_marquee, duration_still, filters_regex, is_reduce_comments, progress_callback)

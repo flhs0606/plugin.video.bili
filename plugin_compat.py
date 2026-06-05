@@ -154,8 +154,13 @@ class _Storage(dict):
 def _dict_to_li(item, set_played=False):
     label = item.get('label', '')
     path = item.get('path', '')
-    li = xbmcgui.ListItem(label=label, label2=item.get('label2', ''), path=path)
-    
+    li = xbmcgui.ListItem(label=label, label2=item.get('label2', ''))
+    # Kodi 21 构造参数里的 path 不传给 OpenInputStream，必须显式 setPath
+    path_str = path or item.get('url', '')
+    if path_str:
+        li.setPath(path_str)
+    # 标记为可播放（防止 Kodi 回退到 folder 处理）
+
     icon = item.get('icon', '')
     thumb = item.get('thumbnail', icon)
     if icon or thumb:
@@ -165,12 +170,18 @@ def _dict_to_li(item, set_played=False):
     if info:
         li.setInfo(item.get('info_type', 'video'), info)
     
-    props = item.get('properties', {})
+    props = item.get('properties') or {}
+    if 'inputstream' in props:
+        li.setProperty('inputstream', str(props['inputstream']))
     for k, v in props.items():
-        li.setProperty(k, str(v))
-    
-    if item.get('is_playable'):
-        li.setProperty('IsPlayable', 'true')
+        if k == 'inputstream':
+            continue
+        if k.startswith('inputstream.'):
+            li.setProperty(k, str(v))
+
+    # Kodi 21: IsPlayable 必须显式设置，否则 ListItem 被当 folder 处理
+    # 导致 OpenInputStream 用 plugin:// 而不是 http:// path
+    li.setProperty('IsPlayable', 'true')
     
     # 直播流：Kodi 21 需要设置 IsLiveStream 防止提前终止
     # 注意：不要设置 inputstreamaddon，Kodi 21 中该属性已弃用
@@ -333,7 +344,17 @@ class Plugin:
 
         li, _ = _dict_to_li(item)
 
-        succeeded = bool(item.get('path', ''))
+        # Kodi 21: setResolvedUrl 需要 ListItem.setPath() 显式设置 path，
+        # 否则 OpenInputStream 拿到的是原始 plugin:// URL
+        path = item.get('path', '')
+        if path:
+            li.setPath(path)
+
+        succeeded = bool(path)
+        xbmc.log('[set_resolved_url] succeeded=%s path=%s props=%s' % (
+            succeeded, path,
+            list(item.get('properties', {}).keys()),
+        ), xbmc.LOGINFO)
         xbmcplugin.setResolvedUrl(handle, succeeded, li)
 
         if subtitles:

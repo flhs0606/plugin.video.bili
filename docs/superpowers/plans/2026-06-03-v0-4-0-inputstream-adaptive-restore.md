@@ -466,37 +466,26 @@ git commit -m "feat: ensure stop_all_live_danmaku() exists for service shutdown"
 
 ---
 
-## Task 8: Delete obsolete files (cascade from Tasks 2-4)
+## Task 8: Mark deletion targets as pending (placeholder)
 
 **Files:**
-- Delete: `e:\Project\plugin.video.bili\monitor.py`
-- Delete: `e:\Project\plugin.video.bili\playback\proxy.py`
-- Delete: `e:\Project\plugin.video.bili\playback\m3u8.py`
+- None (no-op commit)
 
-After Tasks 5 and 6, no file imports `monitor`, `proxy`, or `m3u8`. Safe to delete.
+We defer the actual file deletion to a later task because `playback/mpd.py`, `playback/__init__.py`, and `routes/video.py` still import from the modules to be deleted. The actual deletion happens after Tasks 9 and 10 have migrated those imports.
 
-- [ ] **Step 1: Verify no remaining references**
+- [ ] **Step 1: Verify the cross-references that will block deletion**
 
-Run: `grep -rnE "from monitor|import monitor|from playback\.proxy|from \.proxy|from playback\.m3u8|from \.m3u8" e:/Project/plugin.video.bili/ --include="*.py"`
-Expected: NO matches. (Live danmaku imports inside `live/danmaku.py` are fine because that file is in the `live/` package, not `monitor.py` / `proxy.py` / `m3u8.py`.)
+Run: `grep -rnE "from playback\.proxy|from \.proxy|from playback\.m3u8|from \.m3u8|import monitor|from monitor" e:/Project/plugin.video.bili/ --include="*.py"`
+Expected: matches in `playback/mpd.py:18` (imports `_proxy_register`), `playback/__init__.py:13` (re-exports), `routes/video.py:22-23` (imports `unregister_all`, `write_m3u8_files`). These will be cleared in Tasks 9 and 10.
 
-- [ ] **Step 2: Delete the three files**
+- [ ] **Step 2: Note the deletion target**
 
-```bash
-git rm e:/Project/plugin.video.bili/monitor.py
-git rm e:/Project/plugin.video.bili/playback/proxy.py
-git rm e:/Project/plugin.video.bili/playback/m3u8.py
-```
+`monitor.py`, `playback/proxy.py`, `playback/m3u8.py` will be deleted in a dedicated later task once Tasks 9 and 10 land.
 
-- [ ] **Step 3: Verify the plugin still loads (smoke check)**
-
-Run: `python -c "import ast, os; [ast.parse(open(os.path.join(r,f)).read()) for r,_,fs in os.walk('e:/Project/plugin.video.bili') for f in fs if f.endswith('.py')]; print('all .py parse OK')"`
-Expected: `all .py parse OK`
-
-- [ ] **Step 4: Commit**
+- [ ] **Step 3: Commit (no-op placeholder)**
 
 ```bash
-git commit -m "chore: delete monitor.py, playback/proxy.py, playback/m3u8.py"
+git commit --allow-empty -m "chore: track monitor.py, proxy.py, m3u8.py for deletion post-Task 10"
 ```
 
 ---
@@ -1518,4 +1507,41 @@ Expected last log line: shows the v0.4.0 set of changes. Tag `v0.4.0` is now on 
    - `stop_all_live_danmaku()` — confirmed in Task 7, used in Task 6 (`service.py`) and Task 10 (`routes/video.py`).
    - `getSetting('server_port')` — read in both Task 6 (service) and Task 10 (routes/video), same default `54321`.
 
-4. **Order of execution:** Tasks must be done in order. Task 8 (delete files) depends on Tasks 5, 6 being committed first (no remaining references to `monitor`/`proxy`/`m3u8`). Task 10 (routes/video.py) depends on Task 9 (mpd.py new signature). Task 11 (routes/live.py) is independent of Task 10 but depends on `live.danmaku.start_live_danmaku` import being available.
+4. **Order of execution:** Tasks must be done in order. Task 8 is now a placeholder (the actual deletion moved to Task 16). Task 9 must precede Task 10 (mpd.py's new signature is what routes/video.py calls). Task 11 (routes/live.py) is independent of Task 10 but depends on `live.danmaku.start_live_danmaku` import being available. Task 16 (final deletion) must come after Task 10 (and Task 9) since they migrate the proxy/m3u8 imports.
+
+---
+
+## Task 16: Delete obsolete files (deferred from Task 8)
+
+**Files:**
+- Delete: `e:\Project\plugin.video.bili\monitor.py`
+- Delete: `e:\Project\plugin.video.bili\playback\proxy.py`
+- Delete: `e:\Project\plugin.video.bili\playback\m3u8.py`
+
+After Tasks 9 and 10, no file imports `monitor`, `proxy`, or `m3u8`. Safe to delete.
+
+- [ ] **Step 1: Verify no remaining references**
+
+Run: `grep -rnE "from monitor|import monitor|from playback\.proxy|from \.proxy|from playback\.m3u8|from \.m3u8" e:/Project/plugin.video.bili/ --include="*.py"`
+Expected: NO matches.
+
+- [ ] **Step 2: Delete the three files**
+
+```bash
+git rm e:/Project/plugin.video.bili/monitor.py
+git rm e:/Project/plugin.video.bili/playback/proxy.py
+git rm e:/Project/plugin.video.bili/playback/m3u8.py
+```
+
+- [ ] **Step 3: Verify the plugin still loads (smoke check)**
+
+Run: `PYTHONIOENCODING=utf-8 python -c "import ast, os; [ast.parse(open(os.path.join(r,f), encoding='utf-8').read()) for r,_,fs in os.walk('e:/Project/plugin.video.bili') for f in fs if f.endswith('.py')]; print('all .py parse OK')"`
+Expected: `all .py parse OK`
+
+- [ ] **Step 4: Commit**
+
+```bash
+git commit -m "chore: delete monitor.py, playback/proxy.py, playback/m3u8.py"
+```
+
+---

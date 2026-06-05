@@ -298,3 +298,46 @@ msgstr ""
 msgctxt "#30134"
 msgid "Enable real-time danmaku overlay when watching live streams. Requires network connection."
 msgstr ""
+
+msgctxt "#30060"
+msgid "Audio Quality"
+msgstr ""
+
+msgctxt "#30061"
+msgid "Audio Quality (DASH only)"
+msgstr ""
+
+msgctxt "#30062"
+msgid "Dolby Atmos (E-AC-3 JOC)"
+msgstr ""
+
+msgctxt "#30063"
+msgid "Hi-Res Lossless (FLAC)"
+msgstr ""
+
+msgctxt "#30064"
+msgid "High (192K AAC)"
+msgstr ""
+
+msgctxt "#30065"
+msgid "Medium (132K AAC)"
+msgstr ""
+
+msgctxt "#30066"
+msgid "Low (64K AAC)"
+msgstr ""
+
+msgctxt "#30067"
+msgid "Atmos / Hi-Res requires a Bilibili premium account. Falls back to a lower track if the selected one is unavailable. Kodi audio output must be set to Passthrough to deliver Atmos to a receiver."
+msgstr ""
+
+msgctxt "#30069"
+msgid "Load Cookie From File"
+msgstr ""
+
+msgctxt "#30070"
+msgid "Write the full cookie string (copied from PC browser devtools) to cookie.txt, then click this button. The first 2 paths are tried in order: 1) special://profile/addon_data/plugin.video.bili/cookie.txt  2) special://home/addons/plugin.video.bili/cookie.txt"
+msgstr ""
+
+msgid "30142"
+msgstr "Unable to fetch live stream"

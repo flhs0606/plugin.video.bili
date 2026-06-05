@@ -298,3 +298,46 @@ msgstr "直播弹幕"
 msgctxt "#30134"
 msgid "Enable real-time danmaku overlay when watching live streams. Requires network connection."
 msgstr "观看直播时启用实时弹幕叠加。需要网络连接。"
+
+msgctxt "#30060"
+msgid "Audio Quality"
+msgstr "音频质量"
+
+msgctxt "#30061"
+msgid "Audio Quality (DASH only)"
+msgstr "音频偏好（仅 DASH 模式）"
+
+msgctxt "#30062"
+msgid "Dolby Atmos (E-AC-3 JOC)"
+msgstr "杜比全景声（E-AC-3 JOC）"
+
+msgctxt "#30063"
+msgid "Hi-Res Lossless (FLAC)"
+msgstr "Hi-Res 无损（FLAC）"
+
+msgctxt "#30064"
+msgid "High (192K AAC)"
+msgstr "高清（192K AAC）"
+
+msgctxt "#30065"
+msgid "Medium (132K AAC)"
+msgstr "标准（132K AAC）"
+
+msgctxt "#30066"
+msgid "Low (64K AAC)"
+msgstr "低码（64K AAC）"
+
+msgctxt "#30067"
+msgid "Atmos / Hi-Res requires a Bilibili premium account. Falls back to a lower track if the selected one is unavailable. Kodi audio output must be set to Passthrough to deliver Atmos to a receiver."
+msgstr "杜比全景声 / Hi-Res 需要 B 站大会员。首选音轨不可用时自动降级。需要 Kodi 音频输出设为 Passthrough 才能将 Atmos 透传给功放。"
+
+msgctxt "#30069"
+msgid "Load Cookie From File"
+msgstr "从文件加载 Cookie"
+
+msgctxt "#30070"
+msgid "Write the full cookie string (copied from PC browser devtools) to cookie.txt, then click this button. The first 2 paths are tried in order: 1) special://profile/addon_data/plugin.video.bili/cookie.txt  2) special://home/addons/plugin.video.bili/cookie.txt"
+msgstr "把 PC 浏览器开发者工具里复制的整段 cookie 写到 cookie.txt，然后点此按钮。按顺序查找两个路径：1) special://profile/addon_data/plugin.video.bili/cookie.txt  2) special://home/addons/plugin.video.bili/cookie.txt"
+
+msgid "30142"
+msgstr "无法获取直播流"

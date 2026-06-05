@@ -55,43 +55,42 @@ class BilibiliRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
             return None
         return file_path
 
-    def do_GET(self):
-        if not self.path.endswith('.mpd'):
-            self.send_error(404, 'Not Found')
-            return
-        file_path = self._safe_file_path(self.path)
-        if not file_path:
-            self.send_error(403, 'Forbidden')
-            return
-        try:
-            with open(file_path, 'rb') as f:
-                self.send_response(200)
-                self.send_header('Content-Type', 'application/xml+dash')
-                self.send_header('Content-Length', os.path.getsize(file_path))
-                self.end_headers()
-                while True:
-                    chunk = f.read(self.chunk_size)
-                    if not chunk:
-                        break
-                    self.wfile.write(chunk)
-        except IOError:
-            self.send_error(404, 'File Not Found')
-
-    def do_HEAD(self):
-        if not self.path.endswith('.mpd'):
-            self.send_error(501, 'Not Implemented')
-            return
-        file_path = self._safe_file_path(self.path)
-        if not file_path:
-            self.send_error(403, 'Forbidden')
-            return
+    def _send_mpd(self, file_path):
+        """公共：发送 MPD 文件内容（GET 用 stream，HEAD 用 header-only）。"""
         if not os.path.isfile(file_path):
             self.send_error(404, 'File Not Found')
             return
+        size = os.path.getsize(file_path)
         self.send_response(200)
-        self.send_header('Content-Type', 'application/xml+dash')
-        self.send_header('Content-Length', os.path.getsize(file_path))
+        # inputstream.adaptive needs the standard DASH MIME type
+        # to auto-detect the manifest format. application/xml+dash
+        # is non-standard and adaptive rejects it.
+        self.send_header('Content-Type', 'application/dash+xml')
+        self.send_header('Content-Length', size)
         self.end_headers()
+        # GET 时 method 不是 HEAD 才写 body
+        if self.command != 'HEAD':
+            try:
+                with open(file_path, 'rb') as f:
+                    while True:
+                        chunk = f.read(self.chunk_size)
+                        if not chunk:
+                            break
+                        self.wfile.write(chunk)
+            except IOError:
+                pass
+
+    def do_GET(self):
+        file_path = self._safe_file_path(self.path)
+        if not file_path:
+            self.send_error(404 if not self.path.endswith('.mpd') else 403,
+                            'Not Found' if not self.path.endswith('.mpd') else 'Forbidden')
+            return
+        self._send_mpd(file_path)
+
+    def do_HEAD(self):
+        # HEAD 走和 GET 一样的逻辑；_send_mpd 看 self.command 决定是否发 body
+        self.do_GET()
 
     def log_message(self, format, *args):
         # Silence BaseHTTPServer's stderr logger; Kodi logs are sufficient.
@@ -104,11 +103,20 @@ def get_http_server(address=None, port=None):
     `port` defaults to 54321 (the historical default and Kodi addon
     setting default). The address defaults to 0.0.0.0. Returns None if
     the bind fails (port already in use).
+
+    SO_REUSEADDR is enabled on the server class so that the OS lets
+    us rebind a port that is still in TIME_WAIT from a recently
+    dead CPythonInvoker process. Without this, every navigation
+    after the first one logs 'bind FAILED' until the OS reclaims
+    the port.
     """
     if not re.match(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$', address or ''):
         address = '0.0.0.0'
     port = int(port) if port else 54321
     try:
+        # Set the class attribute before instantiating so the
+        # socketserver base picks it up during bind().
+        BaseHTTPServer.HTTPServer.allow_reuse_address = True
         server = BaseHTTPServer.HTTPServer(
             (address, port), BilibiliRequestHandler,
         )
