@@ -77,7 +77,9 @@ class LiveDanmakuClient:
         # 否则 libass 看到事件 Start 远小于 now（Kodi PTS），全部
         # 过期。__init__ 在 set_resolved_url 之前立即执行，错位 0~5s。
         self._start_time  = time.time()
-        # 喂给 ProcessComments 的格式: (timeline, text, pos, color, size_px, height, width)
+        # 喂给 ProcessComments 的格式（9 字段，ProcessComments 按位置
+        # 索引 [0]/[3]/[4]/[7]/[8]，c[1]/c[2] 是 dead slot，保留 None 占位）：
+        #   (timeline, _, _, text, pos, color, size_px, height_px, width_px)
         # pos: 0=滚动, 1=底部居中, 2=顶部居中, 3=反向滚动
         self.danmaku_list = []
         self.lock         = threading.Lock()
@@ -192,13 +194,14 @@ class LiveDanmakuClient:
         height_px = size_px
         width_px  = CalculateLength(text) * size_px
 
-        # timeline = time.time() - self._start_time (绝对秒数)。
-        # writer 的 cutoff 过滤跟 ProcessComments 算 Start/End 都用
-        # 绝对秒数。
+        # danmaku2ass.ProcessComments 按位置索引读 tuple：c[0] timeline,
+        # c[3] text, c[4] pos (int), c[7] height_px, c[8] width_px。早期
+        # 实现里 c[1]=dm_ts, c[2]=seq 是 dead slot（无人读），保留
+        # None 占位以维持 9 字段契约，比改 ProcessComments 索引安全。
         timeline = time.time() - self._start_time
         with self.lock:
             self.danmaku_list.append(
-                (timeline, text, pos, color, size_px, height_px, width_px)
+                (timeline, None, None, text, pos, color, size_px, height_px, width_px)
             )
 
     def _parse_binary(self, data):
