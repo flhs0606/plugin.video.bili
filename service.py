@@ -76,7 +76,20 @@ def run():
         )
         return
 
-    monitor = xbmc.Monitor()
+    # Monitor.onSettingsChanged() 在用户改本插件设置并点确定时触发。
+    # Kodi 默认不会自动重跑 plugin 列表（用户回到菜单看到的是改之前的
+    # 状态），这里主动 Container.Refresh 强制重新求值 function.* 开关。
+    # 必须用子类覆盖 onSettingsChanged 钩子；Kodi 在 settings dialog
+    # close 后从内部线程调一次，waitForAbort 不会阻塞它。
+    class _SettingsMonitor(xbmc.Monitor):
+        def onSettingsChanged(self):
+            xbmc.log(
+                '[plugin.video.bili] service: onSettingsChanged -> Container.Refresh',
+                xbmc.LOGINFO,
+            )
+            xbmc.executebuiltin('Container.Refresh')
+
+    monitor = _SettingsMonitor()
     xbmc.log(
         '[plugin.video.bili] service: MPD server listening on 0.0.0.0:%s' % port,
         xbmc.LOGINFO,
