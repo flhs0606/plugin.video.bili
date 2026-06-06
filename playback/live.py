@@ -91,7 +91,7 @@ def choose_live_resolution(streams: list) -> dict | None:
             _codes(modern_hevc), _codes(modern_avc), _codes(modern_av1),
             _codes(flv_hevc), _codes(flv_avc), _codes(flv_av1),
         ),
-        xbmc.LOGINFO,
+        xbmc.LOGDEBUG,
     )
 
     # 链式 or 必须按"先 codec 偏好、再 format 偏好"严格排序。
@@ -118,6 +118,6 @@ def choose_live_resolution(streams: list) -> dict | None:
         '[playback.live] selected: %s/%s qn=%s' % (
             best['format_name'], best['codec_name'], best['current_qn']
         ),
-        xbmc.LOGINFO,
+        xbmc.LOGDEBUG,
     )
     return best

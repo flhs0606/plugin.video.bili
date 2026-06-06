@@ -195,9 +195,6 @@ def _polling_login_status(key):
             cookies = '; '.join(
                 cookie.name + '=' + cookie.value for cookie in session.cookies
             )
-            cookie_keys = [c.name for c in session.cookies]
-            xbmc.log('set-cookie fields (%d): %s' % (len(cookie_keys), cookie_keys), xbmc.LOGINFO)
-            xbmc.log('set-cookie: ' + cookies, xbmc.LOGINFO)
             account['cookie'] = cookies
             clear_cookie_cache()
             plugin.clear_function_cache()

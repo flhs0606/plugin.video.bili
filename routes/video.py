@@ -47,18 +47,18 @@ def _try_wiliwili_playurl(bvid, cid, qn, fnval=None):
         img_key, sub_key = getWbiKeys()
         params = encWbi(params, img_key, sub_key)
     except Exception as e:
-        xbmc.log('[wiliwili-playurl] WBI sign failed: %s' % e, xbmc.LOGWARNING)
+        xbmc.log('[wiliwili-playurl] WBI sign failed: %s' % e, xbmc.LOGDEBUG)
 
     for path in ('/x/player/wbi/playurl', '/x/web-interface/playurl'):
         res = get_api_data(path, data=params, raw=True)
         if res.get('code') == 0 and (res.get('data') or res.get('result')):
-            xbmc.log('[wiliwili-playurl] success via %s' % path, xbmc.LOGINFO)
+            xbmc.log('[wiliwili-playurl] success via %s' % path, xbmc.LOGDEBUG)
             return path, res
         xbmc.log(
             '[wiliwili-playurl] %s failed code=%s msg=%s' % (
                 path, res.get('code'), res.get('message', ''),
             ),
-            xbmc.LOGWARNING,
+            xbmc.LOGDEBUG,
         )
     return None, res
 
@@ -177,7 +177,7 @@ def video(id, cid, ispgc, audio_only, title):
     else:
         wiliwili_url, res = _try_wiliwili_playurl(id, cid, qn, fnval=fnval)
         if wiliwili_url is None:
-            xbmc.log('[video] wiliwili failed, fallback /x/player/playurl', xbmc.LOGWARNING)
+            xbmc.log('[video] wiliwili failed, fallback /x/player/playurl', xbmc.LOGDEBUG)
             params = {'bvid': id, 'cid': cid, 'qn': qn, 'fnval': fnval,
                       'fnver': 0, 'fourk': 1,
                       'from_client': 'BROWSER', 'isGaiaAvoided': 'true',
@@ -237,7 +237,7 @@ def video(id, cid, ispgc, audio_only, title):
         # xbmc.service 扩展在某些部署上启动失败，daemon thread
         # fallback 在 addon.py 进程里也尝试 bind。
         mpd_url = 'http://127.0.0.1:%s/%s.mpd' % (port, cid)
-        xbmc.log('[video] MPD written: %s → %s' % (mpd_path, mpd_url), xbmc.LOGINFO)
+        xbmc.log('[video] MPD written: %s → %s' % (mpd_path, mpd_url), xbmc.LOGDEBUG)
         video_url = {
             'path': mpd_url,
             'is_playable': True,

@@ -357,7 +357,7 @@ def live(id):
     if not streams:
         xbmc.log(
             '[live] %s all attempts failed; trying protocol=0' % id,
-            xbmc.LOGINFO,
+            xbmc.LOGDEBUG,
         )
         streams = _fetch(id, 80, '0,1,2', protocol='0')
     if not streams:
@@ -398,7 +398,7 @@ def live(id):
             'yes' if master_url else 'no',
             chosen[:80],
         ),
-        xbmc.LOGINFO,
+        xbmc.LOGDEBUG,
     )
 
     # ── 直播弹幕 ──
@@ -439,7 +439,7 @@ def live(id):
             fmt_name, id,
             'm3u8' if is_m3u8 or chosen.endswith('.m3u8') else 'm4s',
         ),
-        xbmc.LOGINFO,
+        xbmc.LOGDEBUG,
     )
 
     plugin.set_resolved_url(item, subtitles=live_ass)

@@ -1,5 +1,16 @@
 # -*- coding:utf-8 -*-
-"""显示、格式化、文件系统等工具函数（无 plugin 依赖）"""
+"""显示、格式化、文件系统等工具函数（无 plugin 依赖）。
+
+职责速查（7 类，故意不拆 — 拆出去会引发循环 import，且单文件 125 行
+仍在阅读舒适区）:
+  1. UI 标签       tag, parts_tag
+  2. 数字/时间转换 convert_number, timestamp_to_date, parse_duration
+  3. 通知/对话框   notify, notify_error
+  4. 设置/本地化   getSetting, localize, _get_addon
+  5. 文本清理      clear_text
+  6. 播放统计格式化 format_stat
+  7. 文件系统      make_dirs, safe_remove_dir, get_temp_path, remove_dir
+"""
 import sys
 import os
 import locale

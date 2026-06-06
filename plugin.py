@@ -1,10 +1,11 @@
 """
-plugin_compat.py - Kodi 21 原生兼容层，替换 xbmcswift2
+plugin.py - 插件框架核心，提供 Plugin 类（路由 / 存储 / 缓存 / ListItem 构建）
+与 xbmcswift2 兼容的接口；底层使用 Kodi 21 原生 Python API。
 
-提供与原 xbmcswift2 Plugin 类兼容的接口，底层使用 Kodi 21 原生 Python API。
 导出: Plugin, xbmc, xbmcplugin, xbmcvfs, xbmcgui, xbmcaddon
 
-用法: from plugin_compat import Plugin, xbmc, xbmcplugin, xbmcvfs, xbmcgui, xbmcaddon
+用法: from core import plugin, xbmc, xbmcplugin, xbmcvfs, xbmcgui, xbmcaddon
+      (core.py 负责重导出)
 """
 import sys
 import os
@@ -354,7 +355,7 @@ class Plugin:
         xbmc.log('[set_resolved_url] succeeded=%s path=%s props=%s' % (
             succeeded, path,
             list(item.get('properties', {}).keys()),
-        ), xbmc.LOGINFO)
+        ), xbmc.LOGDEBUG)
         xbmcplugin.setResolvedUrl(handle, succeeded, li)
 
         if subtitles:
@@ -373,10 +374,10 @@ class Plugin:
                 break
             time.sleep(1)
         if player.isPlaying():
-            xbmc.log('[plugin_compat] setting subtitles: %s' % subtitles, xbmc.LOGINFO)
+            xbmc.log('[plugin] setting subtitles: %s' % subtitles, xbmc.LOGDEBUG)
             player.setSubtitles(subtitles)
         else:
-            xbmc.log('[plugin_compat] player not started, subtitles skipped', xbmc.LOGWARNING)
+            xbmc.log('[plugin] player not started, subtitles skipped', xbmc.LOGWARNING)
 
     # ── run ──────────────────────────────────────────────────────────────
 
@@ -418,7 +419,7 @@ class Plugin:
                     pass
             return result
 
-        xbmc.log('[plugin_compat] No route for: %s' % path, xbmc.LOGERROR)
+        xbmc.log('[plugin] no route for: %s' % path, xbmc.LOGERROR)
         if handle >= 0:
             xbmcplugin.endOfDirectory(handle, False)
         return None

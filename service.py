@@ -32,12 +32,12 @@ except Exception as e:
         e, traceback.format_exc()), xbmc.LOGERROR)
     sys.exit(1)
 
-# ── Phase 2: http_server ──
+# ── Phase 2: mpd_server ──
 try:
-    from http_server import get_http_server
-    xbmc.log('[plugin.video.bili] service: import http_server OK', xbmc.LOGINFO)
+    from playback.mpd_server import get_mpd_server
+    xbmc.log('[plugin.video.bili] service: import mpd_server OK', xbmc.LOGINFO)
 except Exception as e:
-    xbmc.log('[plugin.video.bili] service: FATAL import http_server: %s\n%s' % (
+    xbmc.log('[plugin.video.bili] service: FATAL import mpd_server: %s\n%s' % (
         e, traceback.format_exc()), xbmc.LOGERROR)
     sys.exit(1)
 
@@ -60,10 +60,10 @@ def run():
         port = 54321
 
     try:
-        httpd = get_http_server(port=port)
+        httpd = get_mpd_server(port=port)
     except Exception as e:
         xbmc.log(
-            '[plugin.video.bili] service: FATAL get_http_server: %s\n%s' % (
+            '[plugin.video.bili] service: FATAL get_mpd_server: %s\n%s' % (
                 e, traceback.format_exc(),
             ), xbmc.LOGERROR,
         )
@@ -107,7 +107,6 @@ def run():
             ), xbmc.LOGERROR,
         )
     finally:
-        xbmc.log('[plugin.video.bili] service: shutting down', xbmc.LOGINFO)
         try:
             httpd.server_close()
         except Exception:

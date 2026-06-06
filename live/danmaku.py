@@ -21,7 +21,7 @@ import zlib
 import xbmc
 
 from utils import getSetting, get_temp_path
-from danmaku2ass import ProcessComments, CalculateLength
+from subtitle.danmaku2ass import ProcessComments, CalculateLength
 
 
 # ── WebSocket 工具 ────────────────────────────────────────────────────
@@ -99,7 +99,7 @@ class LiveDanmakuClient:
                 h['Cookie'] = self._cookie
             r = requests.get(full_url, params=params, headers=h, timeout=10)
             data = r.json()
-            xbmc.log('[live.danmaku] getDanmuInfo code=%s' % data['code'], xbmc.LOGINFO)
+            xbmc.log('[live.danmaku] getDanmuInfo code=%s' % data['code'], xbmc.LOGDEBUG)
             if data['code'] == 0:
                 return data['data']
         except Exception as e:
@@ -131,7 +131,7 @@ class LiveDanmakuClient:
                 sock.close()
                 return None
             self.sock = sock
-            xbmc.log('[live.danmaku] ws connected %s:%s' % (host, port), xbmc.LOGINFO)
+            xbmc.log('[live.danmaku] ws connected %s:%s' % (host, port), xbmc.LOGDEBUG)
             return sock
         except Exception as e:
             xbmc.log('[live.danmaku] _connect: %s' % str(e), xbmc.LOGWARNING)
@@ -148,7 +148,7 @@ class LiveDanmakuClient:
             'key':      token,
         })
         _ws_send(self.sock, _bili_packet(7, body))
-        xbmc.log('[live.danmaku] auth sent', xbmc.LOGINFO)
+        xbmc.log('[live.danmaku] auth sent', xbmc.LOGDEBUG)
 
     # ── 协议解析 → danmaku2ass 格式 ─────────────────────────────────────
 
@@ -222,7 +222,7 @@ class LiveDanmakuClient:
                     pass
                 continue
             if op == 8:
-                xbmc.log('[live.danmaku] auth OK (op=8)', xbmc.LOGINFO)
+                xbmc.log('[live.danmaku] auth OK (op=8)', xbmc.LOGDEBUG)
                 self._connected = True
             elif op == 5:
                 try:
@@ -300,7 +300,7 @@ class LiveDanmakuClient:
         # 用最后一个 host（wiliwili 做法）
         host = host_list[-1].get('host', '')
         port = host_list[-1].get('ws_port', 2244)
-        xbmc.log('[live.danmaku] using %s:%s' % (host, port), xbmc.LOGINFO)
+        xbmc.log('[live.danmaku] using %s:%s' % (host, port), xbmc.LOGDEBUG)
 
         # 2. ws:// 连接
         if not self._connect(host, port):

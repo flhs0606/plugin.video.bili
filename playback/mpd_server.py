@@ -1,11 +1,14 @@
 # -*- coding: utf-8 -*-
-"""Local HTTP server: serve the static MPD file that inputstream.adaptive
-reads to discover B 站 segment URLs.
+"""MPD server: serve the static `{cid}.mpd` file that
+inputstream.adaptive reads to discover B 站 segment URLs.
 
-In v0.4.0 this server has a single job: serve `{cid}.mpd` from
-`special://temp/plugin.video.bili/`. There is no segment proxy
-(segments go directly from inputstream.adaptive to B 站 CDN with
-`stream_headers=Referer=…`). Anything else returns 404.
+Single job: serve `special://temp/plugin.video.bili/*.mpd`. There is
+no segment proxy (segments go directly from inputstream.adaptive to
+B 站 CDN with `stream_headers=Referer=…`). Anything else returns 404.
+
+Bind lifecycle is owned by the caller (service.py primary,
+addon.py daemon-thread fallback). This module just provides the
+request handler class and the bind helper.
 """
 from http import server as BaseHTTPServer
 import os
@@ -97,7 +100,7 @@ class BilibiliRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
         return
 
 
-def get_http_server(address=None, port=None):
+def get_mpd_server(address=None, port=None):
     """Bind and return a HTTPServer. Caller is responsible for serving.
 
     `port` defaults to 54321 (the historical default and Kodi addon

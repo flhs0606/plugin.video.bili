@@ -198,7 +198,7 @@ def collect_audio_tracks(dash: dict) -> List[AudioTrack]:
     valid = [t for t in tracks if t.is_valid()]
     # 诊断：报告每条音轨的 kind 归类，方便验证 FLAC/Atmos 是否被正确识别
     kind_summary = [(t.id, (t.codecs or '')[:20], t.kind, t.codec_mpd, t.label) for t in valid]
-    xbmc.log('[playback.audio] kind: %s' % (kind_summary,), xbmc.LOGINFO)
+    xbmc.log('[playback.audio] kind: %s' % (kind_summary,), xbmc.LOGDEBUG)
     if not dolby_raw and not flac_raw and aac_ids:
         xbmc.log(
             '[playback.audio] only AAC tracks returned. '

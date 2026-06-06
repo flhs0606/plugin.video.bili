@@ -60,10 +60,10 @@ def _start_mpd_server_daemon():
     if _mpd_server_started:
         return True
     try:
-        from http_server import get_http_server
+        from playback.mpd_server import get_mpd_server
         from utils import getSetting
         port = int(getSetting('server_port') or 54321)
-        httpd = get_http_server(port=port)
+        httpd = get_mpd_server(port=port)
         if not httpd:
             # 端口已被占用 — 通常意味着 service.py 进程或
             # 前一个 CPythonInvoker 进程仍占着。MPD server

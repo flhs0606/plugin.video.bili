@@ -9,6 +9,10 @@
     - 自定义 UA 走"特殊客户端"路径，放开所有格式
 
 所以本插件**必须用 wiliwili 风格的 UA**，不能用真实浏览器 UA。
+
+v0.5.0: 全局复用 `requests.Session` —— B 站 API 高频轮询场景下省一次
+TCP+TLS 握手/请求；Cookie 通过 `Cookie` header 显式注入，Session
+自身的 cookie jar 不被使用，无串扰风险。
 """
 from urllib.parse import urlencode
 
@@ -21,10 +25,23 @@ from utils import getSetting
 # 故意用 wiliwili 自己的标识，绕开 B 站的"web 客户端降级到 AAC"策略
 _USER_AGENT = 'wiliwili'
 _REFERER = 'https://www.bilibili.com'
-_REQUEST_TIMEOUT = 10  # 所有 requests 调用统一超时（秒），避免 Kodi 退出时残留
+
+# 双超时：连接 3s, 读 10s。Kodi 媒体中心场景下挂死比快速失败更糟。
+_TIMEOUT_CONNECT = 3
+_TIMEOUT_READ = 10
 
 # 喂给 inputstream.adaptive 的 stream_headers / manifest_headers 字符串
 BILI_REFERER = 'Referer=https://www.bilibili.com'
+
+
+# 全局 Session：所有 GET/POST 复用，TCP+TLS 握手省一次/请求。
+# 默认 headers 注入 UA + Referer + Origin；Cookie 走 per-call 注入。
+_session = requests.Session()
+_session.headers.update({
+    'User-Agent': _USER_AGENT,
+    'Referer': _REFERER,
+    'Origin': 'https://www.bilibili.com',
+})
 
 
 def build_headers(cookie: str = None) -> dict:
@@ -33,6 +50,8 @@ def build_headers(cookie: str = None) -> dict:
     关键决策：不发 sec-ch-* / Accept / Accept-Language。B 站 server
     会按这些 header 判断走 web 路径还是 special-client 路径，
     走 web 路径会被强制降级到只回 AAC。
+
+    主要供 `routes/auth.py` 等绕过 `api/http.py` Session 的特殊场景使用。
     """
     h = {
         'User-Agent': _USER_AGENT,
@@ -51,9 +70,12 @@ def _resolve_cookie() -> str:
 
 
 def post_data(url: str, data: dict) -> dict:
-    headers = build_headers(_resolve_cookie())
+    headers = {'Cookie': _resolve_cookie()} if _resolve_cookie() else {}
     try:
-        res = requests.post(url, data=data, headers=headers, timeout=_REQUEST_TIMEOUT).json()
+        res = _session.post(
+            url, data=data, headers=headers,
+            timeout=(_TIMEOUT_CONNECT, _TIMEOUT_READ),
+        ).json()
     except Exception as e:
         xbmc.log('[api.http] post_data error: %s: %s url=%s' % (
             type(e).__name__, str(e), url), xbmc.LOGWARNING)
@@ -63,10 +85,13 @@ def post_data(url: str, data: dict) -> dict:
 
 def _get_url(url: str) -> dict:
     """fetch_url 的实际 GET 实现（无缓存）。"""
-    xbmc.log('url_get: ' + url)
-    headers = build_headers(_resolve_cookie())
+    xbmc.log('url_get: ' + url, xbmc.LOGDEBUG)
+    headers = {'Cookie': _resolve_cookie()} if _resolve_cookie() else {}
     try:
-        return requests.get(url, headers=headers, timeout=_REQUEST_TIMEOUT).json()
+        return _session.get(
+            url, headers=headers,
+            timeout=(_TIMEOUT_CONNECT, _TIMEOUT_READ),
+        ).json()
     except Exception as e:
         xbmc.log(
             '[api.http] fetch_url error: %s: %s url=%s' % (

@@ -6,7 +6,7 @@ import requests
 
 from core import xbmc, xbmcvfs
 from utils import get_temp_path, getSetting
-from danmaku2ass import Danmaku2ASS, ReadComments
+from subtitle.danmaku2ass import Danmaku2ASS, ReadComments
 
 
 # 点播弹幕上限：B 站热门点播视频 XML 可含数千条弹幕——不限制会导致
@@ -44,8 +44,16 @@ def generate_ass(cid) -> str | None:
             f'https://comment.bilibili.com/{cid}.xml',
             headers=headers, timeout=10,
         )
-        res.encoding = 'utf-8'
-        content = res.text
+        # B 站有时返回 gzip 字节但不带 Content-Encoding 头 (违反 HTTP 规范)，
+        # requests 不会自动解压。也有时返回 UTF-8 BOM 头。
+        # 这里手动兜底：先按 Content-Encoding 头判断，再看 magic bytes。
+        raw = res.content
+        if res.headers.get('Content-Encoding') == 'gzip' or raw[:2] == b'\x1f\x8b':
+            import gzip
+            raw = gzip.decompress(raw)
+        if raw[:3] == b'\xef\xbb\xbf':  # UTF-8 BOM
+            raw = raw[3:]
+        content = raw.decode('utf-8', errors='replace')
     except Exception as e:
         xbmc.log('[playback.ass] generate_ass failed to fetch danmaku: %s' % str(e), xbmc.LOGWARNING)
         return
@@ -60,8 +68,13 @@ def generate_ass(cid) -> str | None:
     # 我们先排序再按"DANMAKU_SCREEN_CAP 段时间窗口内最多 N 条"采样——
     # 视频每段（比如每 8s = stay_time）的弹幕上限 ≈ 同屏 80。
     # 总条数超 DANMAKU_TOTAL_CAP 时按 500 条均匀采样。
-    all_comments = ReadComments(xmlfile, 'autodetect',
-                                font_size=float(getSetting('font_size')))
+    try:
+        all_comments = ReadComments(xmlfile, 'autodetect',
+                                    font_size=float(getSetting('font_size')))
+    except Exception as e:
+        # minidom / 任何 XML 解析失败都吞掉,让视频正常播放 (无弹幕) 即可
+        xbmc.log('[playback.ass] cid=%s danmaku parse failed: %s' % (cid, str(e)), xbmc.LOGWARNING)
+        return
     all_comments.sort(key=lambda c: c[0])  # 按时间戳（c[0]）升序
 
     if len(all_comments) > DANMAKU_TOTAL_CAP:
