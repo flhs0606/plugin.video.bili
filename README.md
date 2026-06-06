@@ -7,7 +7,7 @@
 
 ### 下载
 
-插件下载地址: 看release
+插件下载地址: [release](https://github.com/flhs0606/plugin.video.bili/releases)
 
 ### 感谢
 
