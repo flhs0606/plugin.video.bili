@@ -67,20 +67,16 @@ def index():
                 'context_menu': context_menu,
             })
 
-    if (getSetting('enable_dash') == 'true'
-            and not xbmc.getCondVisibility('System.HasAddon(inputstream.adaptive)')):
+    # v0.6.0 自动判断 DASH/非 DASH: 装 inputstream.adaptive 走 DASH 4K/HDR/Hi-Res,
+    # 没装走 durl 最高 720P。菜单层只做"缺失时引导安装", 不再有用户开关。
+    if not xbmc.getCondVisibility('System.HasAddon(inputstream.adaptive)'):
         if xbmcgui.Dialog().yesno(
             '安装插件',
-            '使用 dash 功能需要安装 inputstream.adaptive 插件，是否安装？',
+            '安装 inputstream.adaptive 后可播放 1080P+ / 杜比视界 / 杜比全景声 / Hi-Res FLAC。\n'
+            '未安装时最高 720P。是否现在安装？',
             '取消', '确认',
         ):
             xbmc.executebuiltin('InstallAddon(inputstream.adaptive)')
-        else:
-            if xbmcgui.Dialog().yesno(
-                '取消安装', '不使用 dash 请到设置中关闭',
-                '取消', '确认',
-            ):
-                plugin.open_settings()
 
     return items
 

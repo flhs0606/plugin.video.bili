@@ -115,18 +115,13 @@
 				</setting>
 			</group>
 			<group id="3" label="30010">
-				<setting id="enable_dash" type="boolean" label="30011" help="30132">
-					<level>0</level>
-					<default>true</default>
-					<control type="toggle"/>
-				</setting>
 				<setting id="server_port" type="integer" label="30012" help="">
 					<level>0</level>
 					<default>54321</default>
 					<control type="edit" format="integer">
 						<heading>30012</heading>
 					</control>
-				</setting>		
+				</setting>
 			</group>
 			<group id="4" label="30020">
 				<setting id="video_resolution" type="integer" label="30021" help="">
@@ -165,11 +160,6 @@
 					<control type="list" format="string">
 						<heading>30035</heading>
 					</control>
-					<dependencies>
-                        <dependency type="enable">
-                            <condition operator="is" setting="enable_dash">true</condition>
-                        </dependency>
-                    </dependencies>
 				</setting>
 			</group>
 			<group id="7" label="30060">
@@ -188,11 +178,6 @@
 					<control type="list" format="string">
 						<heading>30061</heading>
 					</control>
-					<dependencies>
-                        <dependency type="enable">
-                            <condition operator="is" setting="enable_dash">true</condition>
-                        </dependency>
-                    </dependencies>
 				</setting>
 			</group>
 			<group id="5" label="30040">

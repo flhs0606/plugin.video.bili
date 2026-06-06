@@ -3,9 +3,9 @@
 哔哩哔哩 Kodi 21 插件。点播走 DASH MPD → `inputstream.adaptive`；直播走 ffmpeg pipe。
 无需我明确要求，当我需要库或API文档、生成代码、设置或配置步骤时，始终使用Context7。
 
-- Plugin ID: `plugin.video.bili`；Author: Mephis；Version: 0.5.0
+- Plugin ID: `plugin.video.bili`；Author: Mephis；Version: 0.6.0
 - v0.4.0 移除本地 CDN 代理：segments 由 `inputstream.adaptive` 直拉 B 站 CDN（带 `Referer`）。
-- v0.5.0 整理布局 + 性能优化：死代码删除 / 移位 / 重命名 / `requests.Session` / 日志精简；变更明细见 addon.xml `<news>` 段。
+- v0.6.0 删除 `enable_dash` 设置项。点播自动按 `inputstream.adaptive` 是否安装切换 DASH (fnval=4048) / 非 DASH (fnval=1)。
 
 ## 运行环境
 

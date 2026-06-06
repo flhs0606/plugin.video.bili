@@ -165,8 +165,16 @@ def video(id, cid, ispgc, audio_only, title):
         url = None
 
     qn = getSetting('video_resolution')
-    enable_dash = getSetting('enable_dash')
-    fnval = _WILIWILI_FNVAL if enable_dash == 'true' else 1
+    # v0.6.0 自动判断: 装 inputstream.adaptive 走 DASH (fnval=4048, 4K/HDR/Hi-Res/Atmos)
+    # 才有, 最高 1080P+; 没装走非 DASH (fnval=1, durl MP4, B 站服务端最高给 720P)。
+    has_adaptive = xbmc.getCondVisibility('System.HasAddon(inputstream.adaptive)')
+    fnval = _WILIWILI_FNVAL if has_adaptive else 1
+    xbmc.log(
+        '[video] fnval=%d (inputstream.adaptive %s)' % (
+            fnval, 'available' if has_adaptive else 'missing',
+        ),
+        xbmc.LOGDEBUG,
+    )
 
     if ispgc:
         params = {'bvid': id, 'cid': cid, 'qn': qn, 'fnval': fnval,
