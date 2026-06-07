@@ -1,5 +1,6 @@
 # -*- coding:utf-8 -*-
 """点播弹幕 ASS 生成：下载 B 站 XML → danmaku2ass 转 ASS。"""
+import gzip
 import os
 
 import requests
@@ -7,6 +8,12 @@ import requests
 from core import xbmc, xbmcvfs
 from utils import get_temp_path, getSetting
 from subtitle.danmaku2ass import Danmaku2ASS, ReadComments
+
+
+# B 站偶发返回未声明 Content-Encoding 的 gzip 字节，requests 不会自动解压。
+# 也偶发返回 UTF-8 BOM 头。这里手动兜底 (magic bytes 比信 Content-Encoding 头更稳)。
+_GZIP_MAGIC = b'\x1f\x8b'
+_UTF8_BOM = b'\xef\xbb\xbf'
 
 
 # 点播弹幕上限：B 站热门点播视频 XML 可含数千条弹幕——不限制会导致
@@ -48,10 +55,9 @@ def generate_ass(cid) -> str | None:
         # requests 不会自动解压。也有时返回 UTF-8 BOM 头。
         # 这里手动兜底：先按 Content-Encoding 头判断，再看 magic bytes。
         raw = res.content
-        if res.headers.get('Content-Encoding') == 'gzip' or raw[:2] == b'\x1f\x8b':
-            import gzip
+        if res.headers.get('Content-Encoding') == 'gzip' or raw[:2] == _GZIP_MAGIC:
             raw = gzip.decompress(raw)
-        if raw[:3] == b'\xef\xbb\xbf':  # UTF-8 BOM
+        if raw[:3] == _UTF8_BOM:
             raw = raw[3:]
         content = raw.decode('utf-8', errors='replace')
     except Exception as e:

@@ -19,7 +19,7 @@ v0.4.0 流程：
 import os
 
 from core import plugin, xbmc, xbmcvfs
-from utils import getSetting, get_temp_path, tag
+from utils import getSetting, get_temp_path, is_dash_capable, tag
 from api import get_api_data, get_cookie, BILI_REFERER
 from live import stop_all_live_danmaku
 from playback import (
@@ -27,13 +27,13 @@ from playback import (
 )
 
 
-# wiliwili FNVAL
-_WILIWILI_FNVAL = 4048
+# B 站 playurl fnval: 4048 = DASH (走 inputstream.adaptive); 1 = durl (单文件 MP4, 720P 上限)
+DASH_FNVAL = 4048
 
 
 def _try_wiliwili_playurl(bvid, cid, qn, fnval=None):
     if fnval is None:
-        fnval = _WILIWILI_FNVAL
+        fnval = DASH_FNVAL
     params = {
         'bvid': bvid, 'cid': str(cid),
         'gaia_source': 'view-card', 'from_client': 'BROWSER',
@@ -165,16 +165,10 @@ def video(id, cid, ispgc, audio_only, title):
         url = None
 
     qn = getSetting('video_resolution')
-    # v0.6.0 自动判断: 装 inputstream.adaptive 走 DASH (fnval=4048, 4K/HDR/Hi-Res/Atmos)
-    # 才有, 最高 1080P+; 没装走非 DASH (fnval=1, durl MP4, B 站服务端最高给 720P)。
-    has_adaptive = xbmc.getCondVisibility('System.HasAddon(inputstream.adaptive)')
-    fnval = _WILIWILI_FNVAL if has_adaptive else 1
-    xbmc.log(
-        '[video] fnval=%d (inputstream.adaptive %s)' % (
-            fnval, 'available' if has_adaptive else 'missing',
-        ),
-        xbmc.LOGDEBUG,
-    )
+    adaptive = is_dash_capable()
+    fnval = DASH_FNVAL if adaptive else 1
+    xbmc.log('[video] fnval=%d (adaptive %s)' % (fnval, 'on' if adaptive else 'off'),
+             xbmc.LOGDEBUG)
 
     if ispgc:
         params = {'bvid': id, 'cid': cid, 'qn': qn, 'fnval': fnval,

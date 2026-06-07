@@ -1,8 +1,13 @@
 # -*- coding:utf-8 -*-
 """菜单管理：首页目录项、上下移、恢复默认顺序。"""
 from core import plugin, xbmc, xbmcgui
-from utils import getSetting, localize
+from utils import getSetting, install_adaptive, is_dash_capable, localize
 from api import get_uid
+
+
+# 进程内一次性: 用户回答过一次"是否安装 inputstream.adaptive"后不再弹同一个 yesno
+# (Container.Refresh / 返回首页都会重新跑 index())。
+_adaptive_prompt_shown = False
 
 
 def _categories() -> list:
@@ -67,16 +72,17 @@ def index():
                 'context_menu': context_menu,
             })
 
-    # v0.6.0 自动判断 DASH/非 DASH: 装 inputstream.adaptive 走 DASH 4K/HDR/Hi-Res,
-    # 没装走 durl 最高 720P。菜单层只做"缺失时引导安装", 不再有用户开关。
-    if not xbmc.getCondVisibility('System.HasAddon(inputstream.adaptive)'):
+    # v0.6.0: 缺失时引导安装。点播能力差异见 utils.is_dash_capable 注释。
+    global _adaptive_prompt_shown
+    if not _adaptive_prompt_shown and not is_dash_capable():
+        _adaptive_prompt_shown = True
         if xbmcgui.Dialog().yesno(
             '安装插件',
             '安装 inputstream.adaptive 后可播放 1080P+ / 杜比视界 / 杜比全景声 / Hi-Res FLAC。\n'
             '未安装时最高 720P。是否现在安装？',
             '取消', '确认',
         ):
-            xbmc.executebuiltin('InstallAddon(inputstream.adaptive)')
+            install_adaptive()
 
     return items
 

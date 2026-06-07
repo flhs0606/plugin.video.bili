@@ -44,25 +44,6 @@ _session.headers.update({
 })
 
 
-def build_headers(cookie: str = None) -> dict:
-    """wiliwili 风格的最小请求头集合（UA + Referer + Origin）。
-
-    关键决策：不发 sec-ch-* / Accept / Accept-Language。B 站 server
-    会按这些 header 判断走 web 路径还是 special-client 路径，
-    走 web 路径会被强制降级到只回 AAC。
-
-    主要供 `routes/auth.py` 等绕过 `api/http.py` Session 的特殊场景使用。
-    """
-    h = {
-        'User-Agent': _USER_AGENT,
-        'Referer': _REFERER,
-        'Origin': 'https://www.bilibili.com',
-    }
-    if cookie:
-        h['Cookie'] = cookie
-    return h
-
-
 def _resolve_cookie() -> str:
     """延迟 import 避免 api.http ↔ api.cookie 循环。"""
     from api.cookie import get_cookie
@@ -70,7 +51,10 @@ def _resolve_cookie() -> str:
 
 
 def post_data(url: str, data: dict) -> dict:
-    headers = {'Cookie': _resolve_cookie()} if _resolve_cookie() else {}
+    headers = {}
+    cookie = _resolve_cookie()
+    if cookie:
+        headers['Cookie'] = cookie
     try:
         res = _session.post(
             url, data=data, headers=headers,
@@ -86,7 +70,10 @@ def post_data(url: str, data: dict) -> dict:
 def _get_url(url: str) -> dict:
     """fetch_url 的实际 GET 实现（无缓存）。"""
     xbmc.log('url_get: ' + url, xbmc.LOGDEBUG)
-    headers = {'Cookie': _resolve_cookie()} if _resolve_cookie() else {}
+    headers = {}
+    cookie = _resolve_cookie()
+    if cookie:
+        headers['Cookie'] = cookie
     try:
         return _session.get(
             url, headers=headers,

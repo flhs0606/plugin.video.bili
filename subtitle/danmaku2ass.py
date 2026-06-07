@@ -18,6 +18,7 @@ import random
 import re
 import sys
 import xml.dom.minidom
+from functools import lru_cache
 
 import xbmc
 
@@ -109,8 +110,8 @@ def ReadCommentsBilibili2(f, fontsize):
             continue
 
 
-# 格式名 → 解析器映射（v0.5.0 简化：只保留 B 站两种）
-CommentFormatMap = {
+# 格式名 → 解析器映射 (v0.5.0 简化：只保留 B 站两种, 模块私有)
+_CommentFormatMap = {
     'Bilibili': ReadCommentsBilibili,
     'Bilibili2': ReadCommentsBilibili2,
 }
@@ -120,29 +121,22 @@ CommentFormatMap = {
 # ASS 输出：头部 / 单条弹幕 / 定位弹幕
 # ═══════════════════════════════════════════════════════════════════════
 
+@lru_cache(maxsize=1)
 def GetZoomFactor(SourceSize, TargetSize):
     """计算源/目标尺寸缩放因子。结果: (scale, dx, dy), NewX = f*x+dx。"""
-    try:
-        if (SourceSize, TargetSize) == GetZoomFactor.Cached_Size:
-            return GetZoomFactor.Cached_Result
-    except AttributeError:
-        pass
-    GetZoomFactor.Cached_Size = (SourceSize, TargetSize)
     try:
         SourceAspect = SourceSize[0] / SourceSize[1]
         TargetAspect = TargetSize[0] / TargetSize[1]
         if TargetAspect < SourceAspect:  # narrower
             ScaleFactor = TargetSize[0] / SourceSize[0]
-            GetZoomFactor.Cached_Result = (ScaleFactor, 0, (TargetSize[1] - TargetSize[0] / SourceAspect) / 2)
+            return (ScaleFactor, 0, (TargetSize[1] - TargetSize[0] / SourceAspect) / 2)
         elif TargetAspect > SourceAspect:  # wider
             ScaleFactor = TargetSize[1] / SourceSize[1]
-            GetZoomFactor.Cached_Result = (ScaleFactor, (TargetSize[0] - TargetSize[1] * SourceAspect) / 2, 0)
+            return (ScaleFactor, (TargetSize[0] - TargetSize[1] * SourceAspect) / 2, 0)
         else:
-            GetZoomFactor.Cached_Result = (TargetSize[0] / SourceSize[0], 0, 0)
-        return GetZoomFactor.Cached_Result
+            return (TargetSize[0] / SourceSize[0], 0, 0)
     except ZeroDivisionError:
-        GetZoomFactor.Cached_Result = (1, 0, 0)
-        return GetZoomFactor.Cached_Result
+        return (1, 0, 0)
 
 
 # Flash FOV → ASS 旋转：参考 jabbany/CommentCoreLibrary
@@ -261,9 +255,10 @@ def WriteCommentBilibiliPositioned(f, c, width, height, styleid):
         f.write('Dialogue: -1,%(start)s,%(end)s,%(styleid)s,,0,0,0,,{%(styles)s}%(text)s\n' % {'start': ConvertTimestamp(c[0]), 'end': ConvertTimestamp(c[0] + lifetime), 'styles': ''.join(styles), 'text': text, 'styleid': styleid})
     except (IndexError, ValueError):
         try:
-            xbmc.log('[danmaku2ass] invalid positioned comment: %r' % c[3], xbmc.LOGWARNING)
+            data = c[3]
         except IndexError:
-            xbmc.log('[danmaku2ass] invalid positioned comment: %r' % c, xbmc.LOGWARNING)
+            data = repr(c)
+        xbmc.log('[danmaku2ass] invalid positioned comment: %r' % data, xbmc.LOGWARNING)
 
 
 def ProcessComments(comments, f, width, height, bottomReserved, fontface, fontsize, alpha, duration_marquee, duration_still, filters_regex, reduced, progress_callback):
@@ -427,6 +422,7 @@ def _ReplaceLeadingSpace(s):
 
 
 def ASSEscape(s):
+    # `or ' '` 兜底空白行：libass 会丢空行导致前后两行粘连
     return '\\N'.join((_ReplaceLeadingSpace(i) or ' ' for i in str(s).replace('\\', '\\​').replace('{', '\\{').replace('}', '\\}').split('\n')))
 
 
@@ -462,7 +458,7 @@ _C709_R = (0.00956384088080656, 0.03217254540203729, 0.95826361371715607)
 _C709_G = (-0.10493933142075390, 1.17231478191855154, -0.06737545049779757)
 _C709_B = (0.91348912373987645, 0.07858536372532510, 0.00792551253479842)
 
-# 颜色 LRU 缓存：B 站弹幕颜色种类有限，主要就白/红/蓝/绿等
+# 颜色写入上限缓存 (B 站弹幕颜色种类通常 <50, 256 足够, 不实现 LRU 淘汰)
 _color_cache = {0x000000: '000000', 0xffffff: 'FFFFFF'}
 
 
@@ -567,7 +563,7 @@ def ReadComments(input_files, input_format, font_size=25.0, progress_callback=No
                 if not CommentProcessor:
                     raise ValueError('Failed to detect comment file format: %s' % i)
             else:
-                CommentProcessor = CommentFormatMap.get(input_format)
+                CommentProcessor = _CommentFormatMap.get(input_format)
                 if not CommentProcessor:
                     raise ValueError('Unknown comment file format: %s' % input_format)
             # ProbeCommentFormat 读 1+1+38 字节到 EOF；rebind 重新从 0 读，
@@ -581,4 +577,4 @@ def ReadComments(input_files, input_format, font_size=25.0, progress_callback=No
 
 
 def GetCommentProcessor(input_file):
-    return CommentFormatMap.get(ProbeCommentFormat(input_file))
+    return _CommentFormatMap.get(ProbeCommentFormat(input_file))

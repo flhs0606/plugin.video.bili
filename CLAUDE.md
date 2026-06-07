@@ -30,7 +30,7 @@
 | [live/](live/) | `LiveDanmakuClient`（WS + Bili 二进制协议 → `.ass`，atomic 写盘） |
 | [routes/](routes/) | 9 个子模块，URL handlers。共享工具在 [routes/_helpers.py](routes/_helpers.py) |
 | [subtitle/](subtitle/) | `danmaku2ass.py`（XML → ASS），被 `playback/ass.py` 与 `live/danmaku.py` 共用 |
-| 根 | [addon.py](addon.py)、[core.py](core.py)（重导出层）、[plugin.py](plugin.py)、[service.py](service.py)、[utils.py](utils.py)（7 类职责速查表见文件顶部） |
+| 根 | [addon.py](addon.py)、[core.py](core.py)（重导出层）、[plugin.py](plugin.py)、[service.py](service.py)、[utils.py](utils.py)（8 类职责速查表见文件顶部） |
 
 所有模块统一 `from core import plugin, xbmc, xbmcplugin, xbmcvfs, xbmcgui, xbmcaddon`（`core.py` 重导出，保持 import 兼容）。
 
