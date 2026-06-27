@@ -84,6 +84,11 @@ class LiveDanmakuClient:
         self.danmaku_list = []
         self.lock         = threading.Lock()
 
+        # [FIX] 重连控制：最多重试 _MAX_RETRY 次，每次间隔指数退避（上限 60s）
+        self._MAX_RETRY       = 10
+        self._retry_count     = 0
+        self._retry_base_sec  = 3   # 首次重连等待秒数
+
     def _get_token_wbi(self):
         """WBI 签名请求 getDanmuInfo。"""
         try:
@@ -284,6 +289,21 @@ class LiveDanmakuClient:
                 xbmc.log('[live.danmaku] recv: %s' % str(e), xbmc.LOGWARNING)
                 break
 
+    # [FIX] 关闭旧 socket，重置认证状态，供重连前调用
+    def _close_sock(self):
+        sock = self.sock
+        self.sock = None
+        self._connected = False
+        if sock:
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except Exception:
+                pass
+            try:
+                sock.close()
+            except Exception:
+                pass
+
     def _run(self):
         # 1. WBI 签名获取 token
         info = self._get_token_wbi()
@@ -302,31 +322,30 @@ class LiveDanmakuClient:
         port = host_list[-1].get('ws_port', 2244)
         xbmc.log('[live.danmaku] using %s:%s' % (host, port), xbmc.LOGDEBUG)
 
-        # 2. ws:// 连接
+        # 2. ws:// 首次连接
         if not self._connect(host, port):
-            return
+            # [FIX] 首次连接失败也进入重连循环，而非直接 return
+            xbmc.log('[live.danmaku] initial connect failed, will retry', xbmc.LOGWARNING)
+        else:
+            # 3. 发送认证
+            self._send_auth(token)
+            self._retry_count = 0  # 连接成功，重置重试计数
 
-        # 3. 发送认证
-        self._send_auth(token)
-
-        # 4. 心跳线程
+        # 4. 心跳线程（全局只启一次，断线重连后复用同一线程）
         def _hb():
             while self.running:
-                sock = self.sock
-                if not sock:
-                    break
                 time.sleep(30)
                 if not self.running:
                     break
                 sock = self.sock
-                if sock:
+                if sock and self._connected:
                     try:
                         _ws_send(sock, _bili_packet(2, b'{}'))
                     except Exception:
                         pass
         threading.Thread(target=_hb, daemon=True).start()
 
-        # 5. ASS 写入 + 刷新
+        # 5. ASS 写入 + 刷新线程（全局只启一次）
         width  = 1920
         height = 540
         reserve_blank = int((1.0 - self.display_area) * height)
@@ -348,8 +367,7 @@ class LiveDanmakuClient:
                     # stale 引起的）。
                     now_offset = time.time() - self._start_time
                     cutoff = now_offset - self.stay_time - 2
-                    snapshot = [c for c in self.danmaku_list
-                                if c[0] >= cutoff]
+                    snapshot = [c for c in self.danmaku_list if c[0] >= cutoff]
 
                 if not snapshot:
                     continue
@@ -409,7 +427,64 @@ class LiveDanmakuClient:
                     pass
         threading.Thread(target=_writer, daemon=True).start()
 
-        self._recv_loop()
+        # [FIX] 主循环：_recv_loop 退出后自动重连，直到 self.running=False
+        # 或超过最大重试次数（通常是用户主动 stop()）
+        while self.running:
+            # 若 sock 已建立则直接进收包循环
+            if self.sock:
+                self._recv_loop()
+
+            if not self.running:
+                break
+
+            # _recv_loop 退出 = 掉线，尝试重连
+            self._close_sock()
+            self._connected = False
+
+            if self._retry_count >= self._MAX_RETRY:
+                xbmc.log(
+                    '[live.danmaku] max retries (%d) reached for room=%s, giving up'
+                    % (self._MAX_RETRY, self.room_id),
+                    xbmc.LOGERROR,
+                )
+                break
+
+            # 指数退避：3 s, 6 s, 12 s … 上限 60 s
+            wait = min(self._retry_base_sec * (2 ** self._retry_count), 60)
+            self._retry_count += 1
+            xbmc.log(
+                '[live.danmaku] disconnected, retry %d/%d in %ds'
+                % (self._retry_count, self._MAX_RETRY, wait),
+                xbmc.LOGINFO,
+            )
+
+            # 等待期间每秒检查一次 running，避免 stop() 后还傻等
+            for _ in range(int(wait)):
+                if not self.running:
+                    break
+                time.sleep(1)
+
+            if not self.running:
+                break
+
+            # [FIX] 每次重连前重新拉 token（token 有时效，长时间断线后可能失效）
+            new_info = self._get_token_wbi()
+            if new_info:
+                token     = new_info.get('token', token)
+                host_list = new_info.get('host_list', host_list)
+                host      = host_list[-1].get('host', host)
+                port      = host_list[-1].get('ws_port', port)
+
+            xbmc.log(
+                '[live.danmaku] reconnecting to %s:%s' % (host, port),
+                xbmc.LOGINFO,
+            )
+            if self._connect(host, port):
+                self._send_auth(token)
+                self._retry_count = 0  # 重连成功，重置计数
+            # 若 _connect 失败，下一轮循环会再次尝试
+
+        self.running = False  # 确保标志位最终置 False
 
     def start(self):
         self.running = True
@@ -435,17 +510,7 @@ class LiveDanmakuClient:
 
     def stop(self):
         self.running = False
-        sock = self.sock
-        self.sock = None
-        if sock:
-            try:
-                sock.shutdown(socket.SHUT_RDWR)
-            except Exception:
-                pass
-            try:
-                sock.close()
-            except Exception:
-                pass
+        self._close_sock()  # [FIX] 复用 _close_sock，逻辑统一
 
 
 # ── 便捷函数 ────────────────────────────────────────────────────────────
@@ -454,11 +519,7 @@ _instances = {}
 
 
 def _pid_alive(pid: int) -> bool:
-    """跨平台 PID 存活检测。POSIX 用 signal 0；Windows 用 kernel32。
-
-    PID 不存在 / 无权限 → False。Windows 上若 ctypes 不可用，退化为 True
-    （让 timestamp 检查做主，避免误判存活）。
-    """
+    """跨平台 PID 存活检测。"""
     if pid <= 0:
         return False
     if os.name == 'nt':
@@ -486,7 +547,7 @@ def _pid_alive(pid: int) -> bool:
         return False
 
 
-def _acquire_danmaku_lock(room_id, timeout_s=3):
+def _acquire_danmaku_lock(room_id, timeout_s=15):  # [FIX] 3 → 15，大于刷新间隔(5s)
     """跨进程单例锁：确保同一个 room 只有一个 LiveDanmakuClient 跑。
 
     锁文件 = /storage/.kodi/temp/plugin.video.bili/danmaku_<room_id>.lock
@@ -505,8 +566,7 @@ def _acquire_danmaku_lock(room_id, timeout_s=3):
     lock_path = os.path.join(bp, 'danmaku_%s.lock' % room_id)
     now_ts = time.time()
     my_pid = os.getpid()
-    # 短时间 retry 等待别的进程退出
-    deadline = now_ts + timeout_s
+    deadline = now_ts + 3  # 等待超时保持 3s，避免长时间卡住调用方
     while now_ts < deadline:
         if not os.path.exists(lock_path):
             try:
@@ -525,6 +585,7 @@ def _acquire_danmaku_lock(room_id, timeout_s=3):
         except Exception:
             other_pid, other_ts = 0, 0
         pid_alive = _pid_alive(other_pid)
+        # [FIX] timeout_s=15 保证锁在 5s 刷新间隔内不会被误判为过期
         if pid_alive and (now_ts - other_ts) < timeout_s:
             # 别的进程还活且锁未过期，等它退
             time.sleep(0.3)
