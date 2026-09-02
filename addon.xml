@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<addon id="plugin.video.bili" name="bilibili" version="0.6.0" provider-name="Mephis">
+<addon id="plugin.video.bili" name="bilibili" version="0.7.0" provider-name="Mephis">
   <requires>
     <import addon="xbmc.python" version="3.0.0"/>
     <import addon="script.module.requests" version="2.12.4"/>
@@ -15,6 +15,20 @@
     <website>https://github.com/Mephis/plugin.video.bili</website>
     <source>https://github.com/Mephis/plugin.video.bili</source>
     <news>
+v0.7.0
+- 直播 60 分钟断流修复: service.py 新增 `/live-m3u8/<room_id>` 实时转发
+  端点, ffmpeg 每次 refresh 都拿到当下最新的 CDN sliding window;
+  storage 里的 m3u8_url 由 daemon 线程每 50 分钟续命, 避开 CDN TRID 过期.
+  m3u8 manifest 的相对路径 segment URL 在转发时改写为绝对路径,
+  ffmpeg 直接拉 B 站 CDN segment.
+- plugin.Plugin 新增 read_storage / write_storage（每次直读直写
+  disk JSON, 绕过 _unsynced_storages 进程内 cache）— 跨进程 sync
+  (addon.py 短进程写入 → service.py 长跑进程读取).
+- read_storage 用模块级 mtime cache; hot path（mpd_server 每 ~4s
+  一次）省掉 99% disk I/O.
+- utils.rewrite_m3u8_relative_urls 新 helper: 把 m3u8 里相对路径
+  segment URL 改写为基于 m3u8 URL 的绝对路径（防 ffmpeg 用本地
+  base URL 拼接导致 404）.
 v0.6.0
 - 删除 enable_dash 设置项。点播自动按 inputstream.adaptive 是否安装
   切换 DASH (fnval=4048, 4K/HDR/Hi-Res/Atmos) / 非 DASH (fnval=1, durl

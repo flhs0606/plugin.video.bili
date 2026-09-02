@@ -93,10 +93,35 @@ _cached_url = plugin.cached(TTL=1)(_get_url)
 
 
 def fetch_url(url: str, *, raw: bool = False) -> dict:
-    """GET 任意 URL。`raw=True` 跳过 1 分钟内存缓存（CDN 临时签名等场景）。"""
+    """GET 任意 URL。`raw=True` 跳过 1 分钟内存缓存（CDN 临时签名等场景）。
+
+    返回 `.json()` 解析后的 dict（错误时返回 `{'code': -1, ...}`）。
+    非 JSON 响应（m3u8 / 字幕 XML 等）会抛 JSONDecodeError，转成错误 dict。
+    对非 JSON 响应，请用 `fetch_url_text`。
+    """
     if raw or getSetting('network_request_cache') != 'true':
         return _get_url(url)
     return _cached_url(url)
+
+
+def fetch_url_text(url: str) -> str:
+    """GET 任意 URL，返回纯文本（非 `.json()` 解析）。
+
+    用于 m3u8 文本、ASS/XML 字幕、m3u8 manifest 等非 JSON 响应。
+    带 cookie headers（CDN 可能要 cookie 校验）。
+    失败抛异常（让调用方决定如何处理）。
+    """
+    xbmc.log('url_get_text: ' + url, xbmc.LOGDEBUG)
+    headers = {}
+    cookie = _resolve_cookie()
+    if cookie:
+        headers['Cookie'] = cookie
+    resp = _session.get(
+        url, headers=headers,
+        timeout=(_TIMEOUT_CONNECT, _TIMEOUT_READ),
+    )
+    resp.raise_for_status()
+    return resp.text
 
 
 def build_api_url(path: str, data: dict = None) -> str:

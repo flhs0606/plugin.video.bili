@@ -83,6 +83,39 @@ class UrlRule:
 # JSON 持久化存储
 # ═══════════════════════════════════════════════════════════════════════════
 
+def _read_json_storage(filepath):
+    """从 disk 读 JSON dict。失败/不存在/类型不对 → {}。"""
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (json.JSONDecodeError, IOError):
+        return {}
+
+
+def _write_json_storage(filepath, data):
+    """写 JSON dict 到 disk。失败仅 log，不抛。"""
+    try:
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+    except OSError:
+        pass
+    try:
+        with open(filepath, 'w', encoding='utf-8') as f:
+            json.dump(data if data is not None else {}, f, ensure_ascii=False)
+    except IOError as e:
+        xbmc.log(
+            '[plugin] write %s failed: %s' % (filepath, e),
+            xbmc.LOGERROR,
+        )
+
+
+# Plugin.read_storage 用的模块级 mtime 缓存：hot path（mpd_server 每次
+# ffmpeg refresh ~4s）避免每次 open + json.load disk。state 改动频率
+# ~1 次/50 分钟（daemon 续命 m3u8_url），mtime 检查 ~O(1)。
+read_storage_cache_mtime = {}
+read_storage_cache_data = {}
+
+
 class _Storage(dict):
     def __init__(self, filepath, ttl=None):
         super().__init__()
@@ -100,23 +133,16 @@ class _Storage(dict):
 
     def _load(self):
         if os.path.isfile(self._filepath):
-            try:
-                with open(self._filepath, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                if isinstance(data, dict):
-                    if self._ttl and '_ts' in data:
-                        ts = data.pop('_ts')
-                        if timedelta(seconds=time.time() - ts) > self._ttl:
-                            data = {}
-                    self.update(data)
-            except (json.JSONDecodeError, IOError):
-                pass
+            data = _read_json_storage(self._filepath)
+            if data and self._ttl and '_ts' in data:
+                ts = data.pop('_ts')
+                if timedelta(seconds=time.time() - ts) > self._ttl:
+                    data = {}
+            self.update(data)
 
     def sync(self):
         if self._dirty:
-            os.makedirs(os.path.dirname(self._filepath), exist_ok=True)
-            with open(self._filepath, 'w', encoding='utf-8') as f:
-                json.dump(dict(self), f, ensure_ascii=False)
+            _write_json_storage(self._filepath, dict(self))
             self._dirty = False
 
     def close(self):
@@ -261,6 +287,43 @@ class Plugin:
             del self._unsynced_storages[oldest]
         self._unsynced_storages[filename] = s
         return s
+
+    def read_storage(self, name='main'):
+        """从 disk 直接读 storage，绕过 in-memory cache。
+
+        长跑进程（service.py）需要在短进程（addon.py）写入 disk 后
+        立刻看到新值 —— Plugin._unsynced_storages 的进程内 cache 让
+        跨进程同步失效。Hot path（mpd_server 每次 ffmpeg refresh）用
+        模块级 mtime 缓存避免每次都重读+json parse disk。
+        """
+        filename = os.path.join(self._storage_path, name + '.json')
+        try:
+            mtime = os.path.getmtime(filename)
+        except OSError:
+            return {}
+        cached_mtime = read_storage_cache_mtime.get(filename)
+        if cached_mtime == mtime:
+            data = read_storage_cache_data.get(filename)
+            if data is not None:
+                return data
+        data = _read_json_storage(filename)
+        read_storage_cache_mtime[filename] = mtime
+        read_storage_cache_data[filename] = data
+        return data
+
+    def write_storage(self, name='main', data=None):
+        """直接写 storage 到 disk，绕过 in-memory cache。
+
+        长跑进程（service.py daemon）更新状态时用这个，避免和
+        短进程（addon.py）的内存 cache 不一致。同时清掉本进程的
+        mtime cache，让后续 read_storage 立即看到新值。
+        """
+        filename = os.path.join(self._storage_path, name + '.json')
+        _write_json_storage(filename, data)
+        # 主动失效 cache：disk 已变，mtime 比较下次会重读，但显式清掉
+        # 避免 daemon 刚写入立刻 read 时拿到旧 cache（race window）。
+        read_storage_cache_mtime.pop(filename, None)
+        read_storage_cache_data.pop(filename, None)
 
     # ── cached ───────────────────────────────────────────────────────────
 

@@ -305,6 +305,66 @@ def following_live(page):
     return items
 
 
+def _fetch(room_id, stream_qn, fmt_filter, protocol='0,1'):
+    """调一次 getRoomPlayInfo，返回 streams 数组；失败返回 None。
+
+    模块级函数，service.py daemon 线程（live_refresh_daemon）也调用。
+    3 步 fallback（qn=user → qn=80 → protocol=0）在 live() route 内编排。
+    """
+    params = (
+        'room_id={}&no_playurl=0&mask=1&qn={}&platform=web'
+        '&protocol={}&format={}&codec=0,1,2'
+        '&dolby=5&ptype=8&panorama=1'
+    ).format(room_id, stream_qn, protocol, fmt_filter)
+    r = fetch_url(
+        'https://api.live.bilibili.com/xlive/web-room/v2/index/getRoomPlayInfo?' + params
+    )
+    if r['code'] != 0 or not r.get('data', {}).get('playurl_info'):
+        xbmc.log(
+            '[live] _fetch room=%s qn=%s fmt=%s proto=%s -> empty (code=%s)' % (
+                room_id, stream_qn, fmt_filter, protocol, r.get('code'),
+            ),
+            xbmc.LOGDEBUG,
+        )
+        return None
+    return r['data']['playurl_info']['playurl']['stream']
+
+
+def fetch_live_m3u8_url(room_id, qn=10000):
+    """复用 live() 的 3 步 fallback 策略拉取 m3u8 URL。
+
+    返回 m3u8 URL 字符串；非 m3u8 路径（m4s/flv）或失败返回 None。
+    service.py daemon 线程（live_refresh_daemon）也调用。
+
+    判断 m3u8 的依据是 format_name == 'ts' (HLS)，不是 URL 末尾 .m3u8
+    —— B 站 base_url 字段有时候不带 .m3u8 后缀（实测）。
+    """
+    streams = _fetch(room_id, qn, '1')
+    if not streams:
+        streams = _fetch(room_id, 80, '0,1,2')
+    if not streams:
+        streams = _fetch(room_id, 80, '0,1,2', protocol='0')
+    if not streams:
+        return None
+
+    best = choose_live_resolution(streams)
+    if not best:
+        return None
+
+    # 非 m3u8（HLS）路径 —— 只有 FLV 是真的非 HLS 单文件流。
+    # ts / fmp4 都是 HLS 容器（实测 fmp4 也含 /index.m3u8 URL）。
+    if best.get('format_name') == 'flv':
+        return None
+
+    # master_url 优先；回退 urls[0]
+    master_url = best.get('master_url', '') or ''
+    if master_url:
+        return master_url
+
+    urls = best.get('urls', []) or []
+    return urls[0] if urls else None
+
+
 @plugin.route('/live/<id>/')
 def live(id):
     """Fetch a live stream and hand it to Kodi ffmpeg demuxer.
@@ -327,26 +387,6 @@ def live(id):
       to avoid B 站 风控.
     """
     qn = getSetting('live_resolution')
-
-    def _fetch(room_id, stream_qn, fmt_filter, protocol='0,1'):
-        params = (
-            'room_id={}&no_playurl=0&mask=1&qn={}&platform=web'
-            '&protocol={}&format={}&codec=0,1,2'
-            '&dolby=5&ptype=8&panorama=1'
-        ).format(room_id, stream_qn, protocol, fmt_filter)
-        r = fetch_url(
-            'https://api.live.bilibili.com/xlive/web-room/v2/index/getRoomPlayInfo?' + params
-        )
-        if r['code'] != 0 or not r.get('data', {}).get('playurl_info'):
-            xbmc.log(
-                '[live] _fetch room=%s qn=%s fmt=%s proto=%s -> empty '
-                '(code=%s)' % (
-                    room_id, stream_qn, fmt_filter, protocol, r.get('code'),
-                ),
-                xbmc.LOGDEBUG,
-            )
-            return None
-        return r['data']['playurl_info']['playurl']['stream']
 
     # ── Step 1: user's setting QN + format=1 (fmp4 preferred) ──
     streams = _fetch(id, qn, '1')
@@ -409,25 +449,46 @@ def live(id):
         cookie = get_cookie()
         live_ass, _ = start_live_danmaku(id, uid, cookie)
 
-    # ── 输出路径: ffmpeg pipe (统一) ──
-    # B 站 getRoomPlayInfo 现在对几乎所有房间都把 m3u8 放在
-    # urls[0] 而不是 master_url 字段 (B 站 API 行为变化) — 用户
-    # log 验证: 4/4 测试房间 master=no. master_url 分流因此触发
-    # 不到, inputstream.adaptive 直播路径在 v0.4.0 是死代码.
+    # ── 输出路径: m3u8 走本地 HTTP 转发（service.py 54321） ──
+    # 流程：
+    #   1. 把 room_id + m3u8_url 写到 storage 'live_refresh_state'
+    #      service.py m3u8 转发端点每次收到 ffmpeg 请求时从 storage 读
+    #      m3u8_url 并实时 fetch CDN → ffmpeg 拿到的 manifest 永远 fresh。
+    #   2. ffmpeg pipe 喂 http://127.0.0.1:54321/live-m3u8/<id>
+    #      ffmpeg HLS demuxer 每 4 秒 refresh playlist 时访问本地端点
+    #      → service.py 实时拉 CDN 拿当前 sliding window
+    #      → 含新签名 .m4s URL → ffmpeg 持续拉新 segment → 不间断
     #
-    # 统一 ffmpeg pipe 处理所有形态:
-    #   m3u8 → Kodi ffmpeg 探测 .m3u8 自动走 HLS demuxer
-    #           + 周期 refresh playlist 拉新 .ts segment.
-    #   m4s  → Kodi ffmpeg 探测 .m4s 直接 fmp4 demuxer
-    #          (单文件, reconnect 兜底).
-    # 两路共用 reconnect=1&reconnect_streamed=1&reconnect_delay_max=5.
-    is_m3u8 = bool(master_url)
+    # 关键：service.py 不是返回静态文件，而是**每次请求都 fetch CDN**。
+    # 因此 ffmpeg 的 4s refresh 行为与"直拉 CDN"完全一致 —— sliding
+    # window 永远 fresh，无 EOF / 无 60 分钟 TRID 过期。
+    #
+    # 非 m3u8 路径（flv 单文件流）走老 ffmpeg pipe 直接喂 CDN URL。
+    # B 站 m3u8（HLS）路径的可靠标识：format_name ∈ {'ts', 'fmp4'}。
+    # 只有 fmt_name == 'flv' 才是真的 FLV 单文件流（非 HLS）。
+    is_m3u8 = fmt_name != 'flv'
     ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     ffmpeg_hdr = 'Referer=https://www.bilibili.com&User-Agent=%s&Origin=https://www.bilibili.com' % ua
 
-    live_url = '%s|%s&reconnect=1&reconnect_streamed=1&reconnect_delay_max=5' % (
-        chosen, ffmpeg_hdr,
-    )
+    if is_m3u8:
+        # 写 storage: service.py m3u8 转发端点读这个 state。必须用
+        # write_storage（直写 disk）而不是 get_storage（进程内 cache）：
+        # service.py 是另一个进程实例，内存 cache 跨进程不可见。
+        plugin.write_storage('live_refresh_state', {
+            id: {'m3u8_url': chosen},  # service.py 每次来拉时 fetch CDN 这 URL
+        })
+
+        # ── 喂本地 URL 给 ffmpeg pipe ──
+        # headers 给 ffmpeg 拉 .m4s 时用（CDN 校验 .m4s URL 的签名需要 Referer）
+        live_url = (
+            'http://127.0.0.1:54321/live-m3u8/%s'
+            '|%s&reconnect=1&reconnect_streamed=1&reconnect_delay_max=5'
+        ) % (id, ffmpeg_hdr)
+    else:
+        # m4s / flv / unknown：直接喂 CDN URL（inputstream.adaptive 不支持单文件 m4s）
+        live_url = (
+            '%s|%s&reconnect=1&reconnect_streamed=1&reconnect_delay_max=5'
+        ) % (chosen, ffmpeg_hdr)
 
     item = {
         'path': live_url,
@@ -435,11 +496,11 @@ def live(id):
         'is_live': True,
     }
     xbmc.log(
-        '[live] ffmpeg pipe %s room_id=%s path_kind=%s' % (
-            fmt_name, id,
-            'm3u8' if is_m3u8 or chosen.endswith('.m3u8') else 'm4s',
+        '[live] %s/%s room_id=%s path=%s' % (
+            fmt_name, codec_name, id,
+            'local-m3u8' if is_m3u8 else 'ffmpeg-pipe',
         ),
-        xbmc.LOGDEBUG,
+        xbmc.LOGINFO,
     )
 
     plugin.set_resolved_url(item, subtitles=live_ass)

@@ -6,11 +6,11 @@
 """
 from .wbi import encWbi, getWbiKeys
 from .cookie import get_cookie, get_cookie_value, get_uid, clear_cookie_cache
-from .http import post_data, fetch_url, build_api_url, get_api_data, BILI_REFERER
+from .http import post_data, fetch_url, fetch_url_text, build_api_url, get_api_data, BILI_REFERER
 
 __all__ = [
     'encWbi', 'getWbiKeys',
     'get_cookie', 'get_cookie_value', 'get_uid', 'clear_cookie_cache',
-    'post_data', 'fetch_url', 'build_api_url', 'get_api_data',
+    'post_data', 'fetch_url', 'fetch_url_text', 'build_api_url', 'get_api_data',
     'BILI_REFERER',
 ]

@@ -14,9 +14,11 @@
 """
 import sys
 import os
+import re
 import locale
 import shutil
 from datetime import datetime
+from urllib.parse import urljoin
 
 from core import xbmc, xbmcplugin, xbmcvfs, xbmcgui, xbmcaddon
 
@@ -188,3 +190,38 @@ def remove_dir(path):
             shutil.rmtree(path)
         except Exception as e:
             xbmc.log('[plugin.video.bili] shutil.rmtree failed: %s' % e, xbmc.LOGWARNING)
+
+
+def rewrite_m3u8_relative_urls(text, base_url):
+    """把 m3u8 文本里所有相对路径 URL 改成绝对路径。
+
+    B 站 HLS m3u8 文本里 #EXT-X-MAP:URI 和 #EXTINF: 后的 segment URL
+    可能是相对路径（如 'init.mp4' 或 'seg.m4s'）。ffmpeg 用 m3u8 base
+    URL 拼接相对路径时，本地代理模式下会拼到 http://127.0.0.1:54321/
+    下导致 404。需要在写本地文件前重写为基于 m3u8 URL 的绝对路径。
+
+    绝对路径（http:// 或 https://）原样保留。
+    """
+    lines = text.split('\n')
+    out = []
+    for line in lines:
+        stripped = line.strip()
+        # 处理 #EXT-X-MAP:URI="..." 中的相对路径
+        if stripped.startswith('#EXT-X-MAP:'):
+
+            def _abs_uri(m):
+                uri = m.group(1)
+                if not uri.startswith(('http://', 'https://')):
+                    uri = urljoin(base_url, uri)
+                return 'URI="%s"' % uri
+
+            line = re.sub(r'URI="([^"]*)"', _abs_uri, line)
+            out.append(line)
+        elif stripped and not stripped.startswith('#'):
+            # 非注释行：segment URL 行；可能是相对路径
+            if not stripped.startswith(('http://', 'https://')):
+                line = urljoin(base_url, stripped)
+            out.append(line)
+        else:
+            out.append(line)
+    return '\n'.join(out)
