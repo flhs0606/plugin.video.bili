@@ -16,11 +16,22 @@
     <source>https://github.com/Mephis/plugin.video.bili</source>
     <news>
 v0.7.0
-- 直播 60 分钟断流修复: service.py 新增 `/live-m3u8/<room_id>` 实时转发
+- 直播 60 分钟断流修复: service.py 新增 `/live-m3u8/&lt;room_id&gt;` 实时转发
   端点, ffmpeg 每次 refresh 都拿到当下最新的 CDN sliding window;
   storage 里的 m3u8_url 由 daemon 线程每 50 分钟续命, 避开 CDN TRID 过期.
   m3u8 manifest 的相对路径 segment URL 在转发时改写为绝对路径,
   ffmpeg 直接拉 B 站 CDN segment.
+- ⚠️ 直播硬依赖 service.py: addon.py 进程在 plugin.run() 返回后立即
+  退出, 其 daemon HTTP 线程随进程死亡; ffmpeg 在 set_resolved_url 之
+  后才连 `/live-m3u8/&lt;id&gt;`, 此时必须 service.py 长跑进程在 listen 54321.
+- 删冗余: addon.py MPD fallback (v0.4.0 引入, 用户从未触发);
+  `_Storage` TTL 系统 (`_ttl`/`_ts`/`get_storage(TTL=)`);
+  WBI `_FALLBACK_KEYS` (用错的 key 签名保证后续失败一次);
+  旧 flat `dash.dolby_audio`/`dash.flac_audio` 兼容;
+  弹幕 `xml version="2.0"` 分支 (XML 不可能) + tucao.cc/Komica fallback;
+  `_dict_to_li(set_played)` / `Plugin.__init__(name, addon_id)` /
+  `get_storage(file_format, TTL)` / `finish(sort_methods)` 死参数;
+  `_Storage.__del__` 与 atexit 重复 sync. plugin.py net -40 行.
 - plugin.Plugin 新增 read_storage / write_storage（每次直读直写
   disk JSON, 绕过 _unsynced_storages 进程内 cache）— 跨进程 sync
   (addon.py 短进程写入 → service.py 长跑进程读取).

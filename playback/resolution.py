@@ -44,10 +44,6 @@ def _filter_by_preference(items: list, current_value, key: str = 'id') -> list:
     return []
 
 
-# 杜比视界档位的 id（来自 settings.xml）
-_DOLBY_IDS = {126, 127}
-
-
 def _select_video_candidates(dash: dict, codec_preference: list) -> list:
     """从 dash.video 选候选轨（按 codec 字符串识别 DV）。
 

@@ -17,7 +17,6 @@ no local proxy is involved.
 """
 from xml.sax.saxutils import escape as _xml_escape
 
-from core import xbmc
 from .resolution import choose_resolution
 from .audio import collect_audio_tracks, select_by_user_pref
 

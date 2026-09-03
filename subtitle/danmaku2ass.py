@@ -24,22 +24,17 @@ import xbmc
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# 格式探测：只支持 B 站 Bilibili / Bilibili2
+# 格式探测：只支持 B 站 v1 弹幕（xml version="1.0" encoding="UTF-8"）
 # ═══════════════════════════════════════════════════════════════════════
 
 def ProbeCommentFormat(f):
-    """根据 XML 头判断 B 站弹幕格式（v1 / v2）。返回 'Bilibili' 或 'Bilibili2'。"""
+    """根据 XML 头判断是否为 B 站弹幕。返回 'Bilibili' 或 None。"""
     tmp = f.read(1)
     if tmp == '<':
         tmp = f.read(1)
         if tmp == '?':
             tmp = f.read(38)
             if tmp == 'xml version="1.0" encoding="UTF-8"?><i':
-                return 'Bilibili'
-            elif tmp == 'xml version="2.0" encoding="UTF-8"?><i':
-                return 'Bilibili2'
-            elif tmp.startswith('xml version="1.0" encoding="'):
-                # tucao.cc / Komica 等同格式变体
                 return 'Bilibili'
     return None
 
@@ -85,35 +80,10 @@ def ReadCommentsBilibili(f, fontsize):
             continue
 
 
-def ReadCommentsBilibili2(f, fontsize):
-    """B 站 v2 弹幕：time / size / color / pos 字段顺序不同。"""
-    dom = xml.dom.minidom.parse(f)
-    comment_element = dom.getElementsByTagName('d')
-    for i, comment in enumerate(comment_element):
-        try:
-            p = str(comment.getAttribute('p')).split(',')
-            assert len(p) >= 7
-            assert p[3] in ('1', '4', '5', '6', '7', '8')
-            if comment.childNodes.length > 0:
-                time = float(p[2]) / 1000.0
-                if p[3] in ('1', '4', '5', '6'):
-                    c = str(comment.childNodes[0].wholeText).replace('/n', '\n')
-                    size = int(p[4]) * fontsize / 25.0
-                    yield (time, int(p[6]), i, c, {'1': 0, '4': 2, '5': 1, '6': 3}[p[3]], int(p[5]), size, (c.count('\n') + 1) * size, CalculateLength(c) * size)
-                elif p[3] == '7':  # positioned
-                    c = str(comment.childNodes[0].wholeText)
-                    yield (time, int(p[6]), i, c, 'bilipos', int(p[5]), int(p[4]), 0, 0)
-                elif p[3] == '8':
-                    pass  # scripted, ignore
-        except (AssertionError, AttributeError, IndexError, TypeError, ValueError):
-            xbmc.log('[danmaku2ass] invalid comment: %s' % comment.toxml(), xbmc.LOGWARNING)
-            continue
 
-
-# 格式名 → 解析器映射 (v0.5.0 简化：只保留 B 站两种, 模块私有)
+# 格式名 → 解析器映射 (v0.5.0 简化：只保留 B 站 v1, 模块私有)
 _CommentFormatMap = {
     'Bilibili': ReadCommentsBilibili,
-    'Bilibili2': ReadCommentsBilibili2,
 }
 
 

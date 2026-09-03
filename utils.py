@@ -15,7 +15,6 @@
 import sys
 import os
 import re
-import locale
 import shutil
 from datetime import datetime
 from urllib.parse import urljoin

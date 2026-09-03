@@ -6,11 +6,12 @@
 - Plugin ID: `plugin.video.bili`；Author: Mephis；Version: 0.7.0
 - v0.4.0 移除本地 CDN 代理：segments 由 `inputstream.adaptive` 直拉 B 站 CDN（带 `Referer`）。
 - v0.6.0 删除 `enable_dash` 设置项。点播自动按 `inputstream.adaptive` 是否安装切换 DASH (fnval=4048) / 非 DASH (fnval=1)。
-- v0.7.0 直播 60 分钟断流修复：`service.py` 新增 `/live-m3u8/<room_id>` 实时转发端点，ffmpeg 每次 refresh 都从 CDN 拿当下最新 sliding window；`storage/live_refresh_state.json` 里的 `m3u8_url` 由 daemon 每 50 分钟调 `getRoomPlayInfo` 续命。**直播现在强依赖 service.py**：addon.py daemon fallback 进程下 storage 为空，live 会 503。
+- v0.7.0 直播 60 分钟断流修复：`service.py` 新增 `/live-m3u8/<room_id>` 实时转发端点，ffmpeg 每次 refresh 都从 CDN 拿当下最新 sliding window；`storage/live_refresh_state.json` 里的 `m3u8_url` 由 daemon 每 50 分钟调 `getRoomPlayInfo` 续命。**直播硬依赖 service.py**：addon.py 短进程的 daemon HTTP 线程随 `plugin.run()` 退出而死亡，ffmpeg 在 set_resolved_url 后才连 → 必须有 service.py 长跑进程 listen 54321。
+- v0.7.0 删死代码/冗余：addon.py MPD fallback（v0.4.0 引入；用户从未触发过 service.py 静默失败）；`_Storage._ttl`/`_ts` 系统（14 个 caller 全省略 TTL）；`_FALLBACK_KEYS`（用错的 key 签名保证后续失败一次）；旧 flat `dash['dolby_audio']`/`dash['flac_audio']` 形式；`xml version="2.0"` 弹幕分支（XML 不可能）+ tucao.cc/Komica fallback；`_dict_to_li(set_played)` / `Plugin.__init__(name, addon_id)` / `get_storage(file_format, TTL)` / `finish(sort_methods)` 死参数；`__del__` 和 atexit 重复 sync。
 
 ## 运行环境
 
-- 纯 Python，跑在 Kodi 21 内嵌解释器。打包 = zip 仓库根目录；无 build/test/lint。
+- 纯 Python，跑在 Kodi 21 内嵌解释器。打包 = 生成符合 Kodi 结构的 ZIP；无 build/test/lint。
 - 依赖是 Kodi 扩展（`script.module.requests`、`script.module.qrcode`），不走 pip。`inputstream.adaptive` 标为 optional，缺失时 `routes/menu.py:index()` 提示安装。
 - 每次导航是新进程。跨请求状态走 `plugin.get_storage(...)`。
 
@@ -18,7 +19,7 @@
 
 3 个 Kodi 扩展点：
 
-1. `xbmc.python.pluginsource` → [addon.py](addon.py)：`import routes` 触发 `@plugin.route` 注册 → `_start_mpd_server_daemon()`（daemon 线程 fallback，service 不可靠时用 — 但 v0.7.0+ 直播依赖 service.py，fallback 下 live 会 503）→ `plugin.run()`。
+1. `xbmc.python.pluginsource` → [addon.py](addon.py)：`import routes` 触发 `@plugin.route` 注册 → `plugin.run()`。不再在 addon.py 中启动 HTTP fallback；54321 由 service.py 唯一 listener 持有。
 2. `xbmc.service` → [service.py](service.py)：v0.4.0 主 listener，bind `0.0.0.0:54321`（`server_port` 可覆盖），`xbmc.Monitor().waitForAbort()` 循环。同时承载两个端点：
   - `/{cid}.mpd` → 静态 DASH MPD 文件（点播，给 `inputstream.adaptive` 读）。
   - `/live-m3u8/{room_id}` → v0.7.0+ 直播实时转发（每次 fetch CDN m3u8 给 ffmpeg）。daemon 线程（`_LiveRefreshDaemon`）每 50 分钟调 `getRoomPlayInfo` 更新 storage 里的 `m3u8_url`（避开 B 站 CDN 的 ~1-2 小时 TRID 过期）。
@@ -43,7 +44,7 @@
 
 **点播（Durl 回退）**：`{mp4_url}|Referer=...`（仅 Referer）。
 
-**直播**（v0.7.0+）：`routes/live.py:live` → 两次串行 `getRoomPlayInfo`（`qn=user + format=1` 优先 → `qn=80 + format=0,1,2` → `protocol=0`）→ `playback/live.choose_live_resolution`（codec hevc>avc × modern>flv × qn 高优先）→ 优先 `master_url`、回退 `urls[0]` →
+**直播**（v0.7.0+）：`routes/live.py:live` → 两次串行 `getRoomPlayInfo`（`qn=user + format=1` 优先 → 失败时 `qn=80 + format=0,1,2`）→ `playback/live.choose_live_resolution`（codec hevc>avc × modern>flv × qn 高优先）→ 优先 `master_url`、回退 `urls[0]` →
 - **m3u8 路径**（`format_name != 'flv'`）：写入 `storage/live_refresh_state.json[id] = {'m3u8_url': chosen}`（用 `plugin.write_storage`，**不**用 `get_storage` —— 跨进程 cache 不可见）→ `set_resolved_url` 指向 `http://127.0.0.1:54321/live-m3u8/<id>|Referer=...&...&reconnect=1&...`。service.py 每次 ffmpeg 来拉都实时转发 CDN m3u8 → 改写相对路径为绝对路径 → 返回给 ffmpeg。ffmpeg 拉 segment 直接走 CDN 绝对 URL。**不**喂 `inputstream.adaptive`。
 - **flv 路径**：直接喂 CDN URL（ffmpeg pipe + reconnect）。
 
@@ -69,4 +70,4 @@
 - **新直播源**：照 `routes/live.py:live` —— `is_playable=True` + `is_live=True`。m3u8 路径必须 `plugin.write_storage('live_refresh_state', {id: {'m3u8_url': ...}})`，然后 `set_resolved_url` 喂 `http://127.0.0.1:54321/live-m3u8/<id>`；flv 路径直接喂 CDN URL。URL 优先 `master_url`、回退 `urls[0]`。
 - **调弹幕**：group 2 改配置；`live/danmaku.py:start_live_danmaku` 读设置。`_writer` 循环 `time.sleep(3)` 是 ASS 刷新间隔；`setSubtitles` 9 秒节拍，别缩短到 3s（视觉会闪）。
 - **改版本号**：只改 [addon.xml](addon.xml) 的 `version`，**别动 `id`**（是 storage 目录 key）。
-- **发版**：仓库根目录打成 `plugin.video.bili-<version>.zip`（Kodi 按结构安装）；确认 `addon.xml` 在 zip 根。
+- **发版**：打包为 `plugin.video.bili-<version>.zip`；ZIP 根目录必须只有一个 `plugin.video.bili/` 目录，且应写入明确的目录项，`addon.xml` 位于该目录内（Kodi Omega `CAddonInstaller::InstallFromZip()` 会检查根目录恰有一个 folder，再从该 folder 加载 addon.xml）。`addon.xml` 的 news/description 文本中出现 `<...>` 时必须写成 `&lt;...&gt;`，否则 XML 解析失败。排除仓库内 `.md`/`.markdown` 文档、`.git`、`.claude`、`.vscode`、`__pycache__`、`.pyc`/`.pyo` 和其他 ZIP。

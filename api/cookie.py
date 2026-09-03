@@ -4,7 +4,7 @@ import re
 import time
 import uuid
 
-from core import plugin, xbmc
+from core import plugin
 
 
 # 编译后的正则缓存，避免每个 key 重复编译

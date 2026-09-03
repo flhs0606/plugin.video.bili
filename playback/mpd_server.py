@@ -113,7 +113,7 @@ class BilibiliRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
         更新到 storage，保证 CDN 端不会因 m3u8 URL 过期而 403。
         """
         state = plugin.read_storage('live_refresh_state')
-        entry = state.get(room_id) if isinstance(state, dict) else None
+        entry = state.get(room_id)
         if not isinstance(entry, dict):
             self.send_error(404, 'No live stream state for room %s' % room_id)
             return
@@ -183,28 +183,25 @@ class BilibiliRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
         return
 
 
-def get_mpd_server(address=None, port=None):
+def get_mpd_server(port=None):
     """Bind and return a HTTPServer. Caller is responsible for serving.
 
     `port` defaults to 54321 (the historical default and Kodi addon
-    setting default). The address defaults to 0.0.0.0. Returns None if
-    the bind fails (port already in use).
+    setting default). Returns None if the bind fails (port already in use).
 
     SO_REUSEADDR is enabled on the server class so that the OS lets
     us rebind a port that is still in TIME_WAIT from a recently
     dead CPythonInvoker process. Without this, every navigation
-    after the first one logs 'bind FAILED' until the OS reclaims
-    the port.
+    after the first one logs 'bind FAILED' until the OS reclaims the
+    port.
     """
-    if not re.match(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$', address or ''):
-        address = '0.0.0.0'
     port = int(port) if port else 54321
     try:
         # Set the class attribute before instantiating so the
         # socketserver base picks it up during bind().
         BaseHTTPServer.HTTPServer.allow_reuse_address = True
         server = BaseHTTPServer.HTTPServer(
-            (address, port), BilibiliRequestHandler,
+            ('0.0.0.0', port), BilibiliRequestHandler,
         )
         return server
     except socket.error:

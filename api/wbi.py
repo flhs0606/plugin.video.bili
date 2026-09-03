@@ -21,9 +21,6 @@ mixinKeyEncTab = [
 
 _WBI_ESCAPE = str.maketrans('', '', "!'()*")
 
-# 默认时间戳 0 — 仅在 getWbiKeys 失败时占位
-_FALLBACK_KEYS = ('9058f6a04b0aa55f8c4d9e6c2b1f5c3e', 'b2a3b1a3e0a1f4d8c0e1d2a3b4c5d6e7')
-
 
 def getMixinKey(orig: str) -> str:
     """对 imgKey 和 subKey 进行字符顺序打乱编码，得到 mixin_key"""
@@ -31,7 +28,13 @@ def getMixinKey(orig: str) -> str:
 
 
 def encWbi(params: dict, img_key: str, sub_key: str) -> dict:
-    """为请求参数加 wts + w_rid 字段，返回新 dict（不修改原 dict）。"""
+    """为请求参数加 wts + w_rid 字段，返回新 dict（不修改原 dict）。
+
+    img_key 或 sub_key 为 None 时直接返回原 params（不签名），让
+    B 站返回 460/-352，由调用方决定如何提示重新登录。
+    """
+    if not img_key or not sub_key:
+        return params
     mixin_key = getMixinKey(img_key + sub_key)
     signed = {**params, 'wts': round(time.time())}
     signed = dict(sorted(signed.items()))
@@ -45,8 +48,10 @@ def encWbi(params: dict, img_key: str, sub_key: str) -> dict:
 @plugin.cached(TTL=30)
 def getWbiKeys():
     """获取最新的 img_key 和 sub_key，缓存 30 分钟。
-    返回 (img_key, sub_key)；API 失败时返回占位值，调用方应捕获
-    后续 WBI 签名失败的 460/-352 错误并提示用户重新登录。
+
+    返回 (img_key, sub_key)；API 失败时返回 None，encWbi 会跳过签名
+    让 B 站返回明确的 460/-352 错误，而不是用错误的 fallback key
+    生成无效签名（调用方还要再做一次失败 round-trip）。
     """
     # 函数内 import 避免 api.wbi ↔ api.http 在 import 时循环
     from api.http import get_api_data
@@ -58,5 +63,5 @@ def getWbiKeys():
         sub_key = sub_url.rsplit('/', 1)[1].split('.')[0]
         return img_key, sub_key
     except (KeyError, TypeError, IndexError):
-        xbmc.log('[api.wbi] getWbiKeys failed, using fallback', xbmc.LOGWARNING)
-        return _FALLBACK_KEYS
+        xbmc.log('[api.wbi] getWbiKeys failed (login required?)', xbmc.LOGWARNING)
+        return None

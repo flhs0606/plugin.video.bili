@@ -20,7 +20,7 @@ import os
 
 from core import plugin, xbmc, xbmcvfs
 from utils import getSetting, get_temp_path, is_dash_capable, tag
-from api import get_api_data, get_cookie, BILI_REFERER
+from api import get_api_data, BILI_REFERER
 from live import stop_all_live_danmaku
 from playback import (
     generate_mpd, generate_ass, report_history,

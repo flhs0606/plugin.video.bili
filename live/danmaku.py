@@ -165,9 +165,10 @@ class LiveDanmakuClient:
             return
 
         # B 站弹幕属性（与 danmaku2ass ReadCommentsBilibili 解析逻辑一致）
-        mode     = int(meta[1]) if len(meta) > 1 else 1   # 1=滚动,4=底部,5=顶部
-        fontsize = int(meta[2]) if len(meta) > 2 else 25
-        color    = int(meta[3]) if len(meta) > 3 else 0xffffff
+        # 前面 `len(meta) >= 4` 已保证索引 [1..3] 存在
+        mode     = int(meta[1])   # 1=滚动,4=底部,5=顶部
+        fontsize = int(meta[2])
+        color    = int(meta[3])
 
         text = str(info[1]) if info[1] else ''
         if not text.strip():

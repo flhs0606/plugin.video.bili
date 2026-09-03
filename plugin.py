@@ -15,7 +15,6 @@ import time
 import atexit
 import threading
 from functools import wraps
-from datetime import timedelta
 from urllib.parse import urlencode as _urlencode
 
 # Kodi 原生模块
@@ -40,11 +39,8 @@ class NotFoundException(Exception):
 
 
 class UrlRule:
-    def __init__(self, url_rule, view_func, name, options=None):
-        self.url_rule = url_rule
+    def __init__(self, url_rule, view_func, name):
         self.view_func = view_func
-        self.name = name
-        self.options = options or {}
         rule = url_rule if url_rule == '/' else url_rule.rstrip('/') + '/?'
         params = re.findall(r'\<(.+?)\>', url_rule)
         if params:
@@ -117,10 +113,9 @@ read_storage_cache_data = {}
 
 
 class _Storage(dict):
-    def __init__(self, filepath, ttl=None):
+    def __init__(self, filepath):
         super().__init__()
         self._filepath = filepath
-        self._ttl = ttl
         self._dirty = False
         self._load()
         atexit.register(self._atexit_sync)
@@ -133,12 +128,7 @@ class _Storage(dict):
 
     def _load(self):
         if os.path.isfile(self._filepath):
-            data = _read_json_storage(self._filepath)
-            if data and self._ttl and '_ts' in data:
-                ts = data.pop('_ts')
-                if timedelta(seconds=time.time() - ts) > self._ttl:
-                    data = {}
-            self.update(data)
+            self.update(_read_json_storage(self._filepath))
 
     def sync(self):
         if self._dirty:
@@ -161,12 +151,6 @@ class _Storage(dict):
         super().__delitem__(k)
         self._dirty = True
 
-    def __del__(self):
-        try:
-            self.sync()
-        except Exception:
-            pass
-
     def __enter__(self):
         return self
 
@@ -178,10 +162,10 @@ class _Storage(dict):
 # dict -> xbmcgui.ListItem 转换
 # ═══════════════════════════════════════════════════════════════════════════
 
-def _dict_to_li(item, set_played=False):
+def _dict_to_li(item):
     label = item.get('label', '')
     path = item.get('path', '')
-    li = xbmcgui.ListItem(label=label, label2=item.get('label2', ''))
+    li = xbmcgui.ListItem(label=label)
     # Kodi 21 构造参数里的 path 不传给 OpenInputStream，必须显式 setPath
     path_str = path or item.get('url', '')
     if path_str:
@@ -234,10 +218,9 @@ def _dict_to_li(item, set_played=False):
 # ═══════════════════════════════════════════════════════════════════════════
 
 class Plugin:
-    def __init__(self, name=None, addon_id=None):
+    def __init__(self):
         self._addon = xbmcaddon.Addon()
         self._addon_id = self._addon.getAddonInfo('id')
-        self._name = name or self._addon.getAddonInfo('name')
         self._routes = []
         self._view_functions = {}
         self._end_of_directory = False
@@ -249,10 +232,10 @@ class Plugin:
 
     # ── route / url_for ──────────────────────────────────────────────────
 
-    def route(self, url_rule, name=None, options=None):
+    def route(self, url_rule, name=None):
         def decorator(f):
             view_name = name or f.__name__
-            rule = UrlRule(url_rule, f, view_name, options)
+            rule = UrlRule(url_rule, f, view_name)
             self._view_functions[view_name] = rule
             self._routes.append(rule)
             return f
@@ -271,12 +254,11 @@ class Plugin:
 
     # ── storage ──────────────────────────────────────────────────────────
 
-    def get_storage(self, name='main', file_format='pickle', TTL=None):
+    def get_storage(self, name='main'):
         filename = os.path.join(self._storage_path, name + '.json')
         if filename in self._unsynced_storages:
             return self._unsynced_storages[filename]
-        ttl = timedelta(minutes=TTL) if TTL else None
-        s = _Storage(filename, ttl=ttl)
+        s = _Storage(filename)
         # 限制缓存数量，防止长期运行（service 模式）内存泄漏
         if len(self._unsynced_storages) >= 30:
             oldest = next(iter(self._unsynced_storages))
@@ -383,7 +365,7 @@ class Plugin:
         xbmcplugin.addDirectoryItems(handle, tuples, len(tuples))
         self._added_items.extend(items)
 
-    def finish(self, items=None, sort_methods=None, succeeded=True,
+    def finish(self, items=None, succeeded=True,
                update_listing=False, cache_to_disc=True):
         if items:
             self._add_items(items)

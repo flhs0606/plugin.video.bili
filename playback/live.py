@@ -11,7 +11,6 @@ from utils import getSetting
 
 # settings.xml 中 live_video_encoding 的 codecid 值（字符串字面量）
 LIVECODEC_HEVC = '12'
-LIVECODEC_AVC = '7'
 
 # B 站直播流 codec_name 字符串（小写）。B 站目前没推 AV1 直播，但留
 # 兼容分支以便未来直接启用。

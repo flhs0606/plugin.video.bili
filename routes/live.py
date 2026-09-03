@@ -343,8 +343,6 @@ def fetch_live_m3u8_url(room_id, qn=10000):
     if not streams:
         streams = _fetch(room_id, 80, '0,1,2')
     if not streams:
-        streams = _fetch(room_id, 80, '0,1,2', protocol='0')
-    if not streams:
         return None
 
     best = choose_live_resolution(streams)
@@ -393,13 +391,6 @@ def live(id):
     # ── Step 2: fallback to qn=80 (标清) format=0,1,2 ──
     if not streams:
         streams = _fetch(id, 80, '0,1,2')
-    # ── Step 3: rare protocol=0 fallback ──
-    if not streams:
-        xbmc.log(
-            '[live] %s all attempts failed; trying protocol=0' % id,
-            xbmc.LOGDEBUG,
-        )
-        streams = _fetch(id, 80, '0,1,2', protocol='0')
     if not streams:
         xbmc.log('[live] no playurl for room_id=%s' % id, xbmc.LOGERROR)
         xbmcgui.Dialog().notification(
@@ -417,8 +408,8 @@ def live(id):
         )
         return
 
-    master_url = best.get('master_url', '') or ''
-    urls = best.get('urls', []) or []
+    master_url = best.get('master_url') or ''
+    urls = best.get('urls') or []
     fmt_name = best.get('format_name', '')
     codec_name = best.get('codec_name', '')
 

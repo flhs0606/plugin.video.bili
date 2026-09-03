@@ -130,34 +130,29 @@ def collect_audio_tracks(dash: dict) -> List[AudioTrack]:
           "flac":  {"display": true, "audio": {...}}  // 嵌套对象，另一部分 FLAC
         }
       }
-    旧版接口可能用 flat 字段 "dolby_audio" / "flac_audio"，同时兼容。
 
     注：track 的 kind 按 codecs 字符串判断（B 站会把 Hi-Res FLAC 放在 dolby 字段）。
     """
     aac_raw = dash.get('audio', []) or []
 
-    # Dolby: 优先嵌套结构，兼容旧 flat
+    # Dolby / FLAC：嵌套结构（dash.dolby.audio[] / dash.flac.audio{}）。
     dolby_obj = dash.get('dolby')
     if isinstance(dolby_obj, dict):
         dolby_raw = dolby_obj.get('audio') or []
-    elif isinstance(dolby_obj, list):
-        dolby_raw = dolby_obj
     else:
-        dolby_raw = dash.get('dolby_audio') or []  # 旧 flat 兜底
-
-    # FLAC: 优先嵌套结构，兼容旧 flat
+        dolby_raw = []
     flac_obj = dash.get('flac')
     if isinstance(flac_obj, dict):
         flac_raw = flac_obj.get('audio')
     else:
-        flac_raw = flac_obj  # 旧 flat 单条对象
+        flac_raw = None
 
     # 诊断：把响应的音轨全貌打到日志
     aac_ids = [a.get('id') for a in aac_raw if a.get('id')]
     dolby_ids = [a.get('id') for a in dolby_raw if a.get('id')]
     flac_id = flac_raw.get('id') if isinstance(flac_raw, dict) else None
-    dolby_type = (dolby_obj.get('type') if isinstance(dolby_obj, dict) else None)
-    has_flac_disp = (flac_obj.get('display') if isinstance(flac_obj, dict) else None)
+    dolby_type = dolby_obj.get('type') if isinstance(dolby_obj, dict) else None
+    has_flac_disp = flac_obj.get('display') if isinstance(flac_obj, dict) else None
 
     # 关键诊断：把第一个音轨的**全部字段名**打出来，看 B 站真实返回的字段
     # （特别是声道数、采样率、位深的字段名，我们猜的几个可能错）

@@ -23,9 +23,8 @@ def remove_cache_files():
     remove_dir(path)
     if not os.path.isdir(path):
         xbmcgui.Dialog().ok('提示', '清除成功')
-        return True
+        return
     xbmcgui.Dialog().ok('提示', '清除失败')
-    return False
 
 
 @plugin.route('/check_login/')
@@ -65,7 +64,7 @@ def load_cookie_file():
             '请把 cookie 字符串保存到以下任一文件:\n\n' +
             '\n'.join(candidate_paths),
         )
-        return False
+        return
 
     try:
         with xbmcvfs.File(file_path, 'r') as f:
@@ -73,7 +72,7 @@ def load_cookie_file():
         cookie = content.strip()
         if not cookie:
             xbmcgui.Dialog().ok('错误', 'cookie.txt 是空的')
-            return False
+            return
         account = plugin.get_storage('account')
         account['cookie'] = cookie
         clear_cookie_cache()
@@ -88,11 +87,9 @@ def load_cookie_file():
                 file_path, len(cookie),
             ),
         )
-        return True
     except Exception as e:
         xbmc.log('[load_cookie_file] error: %s' % e, xbmc.LOGERROR)
         xbmcgui.Dialog().ok('错误', '读取失败: %s' % e)
-        return False
 
 
 @plugin.route('/logout/')
